@@ -101,7 +101,7 @@ iPhone 新增圆屏 BLE HID 媒体按键，可向当前播放器发送播放/暂
 
 ## iPhone 安装
 
-从 [GitHub Releases](https://github.com/zyn950929/MotoNav/releases) 下载 `MotoNav-0.13.8-unsigned.ipa`，使用自己的 Apple 账号通过 Sideloadly 签名安装。详见 [安装与续签教程](docs/INSTALL-IOS.md)。
+从 [GitHub Releases](https://github.com/zyn950929/MotoNav/releases) 下载 `MotoNav-0.13.8-unsigned.ipa`，使用自己的 Apple 账号通过 Sideloadly 签名安装。新手可先看[中文图文安装教程](docs/INSTALL-BEGINNER.md)，签名与续签细节见[安装与续签说明](docs/INSTALL-IOS.md)。
 
 ## Windows 一键打包
 
