@@ -82,6 +82,7 @@ class NavActivity : ComponentActivity() {
     private lateinit var muteBtn: TextView
     private lateinit var arrivedCard: LinearLayout
     private lateinit var settingsBtn: TextView
+    private var providerBtn:TextView?=null
 
     private var overview = false
     private var muted = false
@@ -144,6 +145,15 @@ class NavActivity : ComponentActivity() {
         root.addView(settingsBtn,FrameLayout.LayoutParams(dp(46),dp(46),Gravity.TOP or Gravity.END).apply {
             rightMargin=dp(12);topMargin=dp(160)
         })
+        if(packageName=="com.autonavi.amapauto") {
+            providerBtn=circleBtn("车机",12f,S.CYAN).apply {
+                contentDescription="查看车机路口信息，导航继续"
+                setOnClickListener{NavigationUi.openProvider(this@NavActivity)}
+            }
+            root.addView(providerBtn,FrameLayout.LayoutParams(dp(46),dp(46),Gravity.TOP or Gravity.END).apply{
+                rightMargin=dp(12);topMargin=dp(218)
+            })
+        }
         buildBottomBar()
         buildArrived()
         setContentView(root)
@@ -172,6 +182,7 @@ class NavActivity : ComponentActivity() {
             sideCol.requestLayout()
             (settingsBtn.layoutParams as FrameLayout.LayoutParams).topMargin=b+dp(10)
             settingsBtn.requestLayout()
+            providerBtn?.let{(it.layoutParams as FrameLayout.LayoutParams).topMargin=b+dp(68);it.requestLayout()}
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -619,6 +630,7 @@ class NavActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume(); naviView.onResume()
+        FusionCarUi.closeConsole(this)
         muted=getSharedPreferences("motonav",Context.MODE_PRIVATE).getBoolean("nav_muted",false)
         NaviVoice.muted=muted
         navi?.let { NaviVoice.applyTo(it) }

@@ -8,6 +8,15 @@ import android.content.Intent
 object NavigationUi {
     const val EXTRA_SETTINGS_PAGE="navigation_settings_page"
     fun active()=(WebMotorGuide.active && !WebMotorGuide.arrived) || NaviBridge.hasActiveNavigation()
+    fun openProvider(context:Context) {
+        val target=when {
+            WebMotorGuide.active && !WebMotorGuide.arrived -> MotorWebNavActivity::class.java.name
+            NaviBridge.hasActiveNavigation() -> NavActivity::class.java.name
+            else -> MainActivity::class.java.name
+        }
+        runCatching{FusionCarUi.openConsole(context,target)}
+            .onFailure{android.widget.Toast.makeText(context,"车机界面暂未打开，请重试",android.widget.Toast.LENGTH_SHORT).show()}
+    }
     fun openSettings(activity:Activity,page:Int=1) {
         // Do not CLEAR_TOP to MainActivity: that would finish the live SDK page.
         activity.startActivity(Intent(activity,MainActivity::class.java)

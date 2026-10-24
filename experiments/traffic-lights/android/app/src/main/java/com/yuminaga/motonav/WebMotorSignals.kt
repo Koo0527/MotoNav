@@ -19,6 +19,7 @@ object WebMotorSignals {
     private var generation=0L
     private var routeKey=""
     private var index:RouteSignalIndex?=null
+    private var roadIndexes:List<RouteRoadIndex> = emptyList()
     private var cameras:List<RouteCameraIndex.Marker> = emptyList()
     private var lastCameraMap=""
     private var lastCameraLimit=""
@@ -28,7 +29,7 @@ object WebMotorSignals {
     fun stop(){
         generation++;job?.cancel(true);job=null;listener?.let{runCatching{navi?.removeAMapNaviListener(it)}}
         listener=null;navi=null;routeKey="";index=null;status="信号灯节点已清除"
-        cameras=emptyList()
+        cameras=emptyList();roadIndexes=emptyList()
         if(lastCameraMap.isNotEmpty()||lastCameraLimit.isNotEmpty()){BleLink.send("#c");BleLink.send("#k")}
         lastCameraMap="";lastCameraLimit=""
     }
@@ -51,8 +52,10 @@ object WebMotorSignals {
             job=worker.submit {
                 val result=runCatching{
                 val nodes=ArrayList<RouteSignalIndex.Node>()
+                val coordinateLists=paths.associateWith{it.lightList.orEmpty().toList()}
                 for(path in paths)for(step in path.steps.orEmpty())for(link in step.links.orEmpty()){
-                    if(!link.trafficLights)continue
+                    // A real point list has priority over a marked link endpoint.
+                    if(coordinateLists[path].orEmpty().isNotEmpty() || !link.trafficLights)continue
                     val coords=link.coords.orEmpty();val end=coords.lastOrNull() ?: continue
                     var distance=0.0;var back=coords.lastIndex
                     while(back>0 && distance<25){
@@ -70,6 +73,7 @@ object WebMotorSignals {
                 for(step in route.steps)for(i in step.startIndex until step.endIndex)if(i in roads.indices)roads[i]=step.road.trim()
                 val target=route.tracker()
                 val matchedCameras=ArrayList<RouteCameraIndex.Marker>()
+                val references=ArrayList<RouteRoadIndex>()
                 for(path in paths){
                     val points=ArrayList<DoubleArray>();val sourceRoads=ArrayList<String>()
                     for(step in path.steps.orEmpty())for(link in step.links.orEmpty())for(c in link.coords.orEmpty()){
@@ -82,15 +86,20 @@ object WebMotorSignals {
                     if(points.size<2)continue
                     val raw=path.allCameras.orEmpty().map{RouteCameraIndex.Camera(it.y,it.x,it.cameraType,it.cameraSpeed.coerceAtLeast(0))}
                     val reference=runCatching{MotorTrack(points.toTypedArray())}.getOrNull() ?: continue
+                    references.add(RouteRoadIndex(reference,sourceRoads.toTypedArray(),target))
+                    for(point in coordinateLists[path].orEmpty()) {
+                        RouteSignalIndex.sdkPoint(reference,sourceRoads.toTypedArray(),point.latitude,point.longitude)?.let{nodes.add(it)}
+                    }
                     matchedCameras.addAll(RouteCameraIndex.match(reference,sourceRoads.toTypedArray(),target,roads,raw))
                     Log.i("MotoNavWebSignals","camera metadata raw=${raw.size} accepted=${matchedCameras.size}")
                 }
-                val signals=RouteSignalIndex(target,roads,nodes)
+                val signals=RouteSignalIndex(target,roads,nodes,references)
                 Log.i("MotoNavWebSignals","route=${route.key} raw=${nodes.size} accepted=${signals.signals.size}")
-                Pair(signals,matchedCameras.sortedBy{it.progress})
+                Log.i("MotoNavWebSignals","SDK lamp coordinate list=${coordinateLists.values.sumOf{it.size}}; endpoint fallback only for paths without a list")
+                Triple(signals,matchedCameras.sortedBy{it.progress},references.toList())
                 }
                 main.post {
-                    if(current())result.onSuccess{matched->index=matched.first;cameras=matched.second;status="已核对 ${matched.first.signals.size} 个信号灯、${matched.second.size} 个电子眼"}
+                    if(current())result.onSuccess{matched->index=matched.first;cameras=matched.second;roadIndexes=matched.third;status="已核对 ${matched.first.signals.size} 个信号灯、${matched.second.size} 个电子眼"}
                         .onFailure{status="信号灯节点读取失败，摩托车导航继续";Log.w("MotoNavWebSignals","metadata",it)}
                 }
             }
@@ -157,6 +166,10 @@ object WebMotorSignals {
         val next=i.next(WebMotorGuide.routeProgress)
         return if(next>=0)"$routeKey:signal:$next" else ""
     }
+    fun currentRoad():String {
+        if(!WebMotorGuide.guidanceFresh() || WebMotorGuide.route?.key!=routeKey)return ""
+        return RouteSignalIndex.roadAt(roadIndexes,WebMotorGuide.routeProgress)
+    }
     fun debug()=org.json.JSONObject().put("status",status).put("count",index?.signals?.size ?: 0).put("cameras",cameras.size).put("cameraMap",lastCameraMap).put("cameraLimit",lastCameraLimit)
-        .put("metres",distance()).put("approachKey",approachKey()).put("routeKey",routeKey)
+        .put("metres",distance()).put("approachKey",approachKey()).put("routeKey",routeKey).put("matchedRoad",currentRoad())
 }

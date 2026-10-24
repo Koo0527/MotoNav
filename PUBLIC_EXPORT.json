@@ -57,7 +57,7 @@
   "amapOnlyChecks": 3037,
   "fourStyleRasterChecks": 22941,
   "verificationNotes": "docs/VERIFY-2026-10-25.md",
-  "androidFusionVersion": "8.3.26-fusion.19.2",
+  "androidFusionVersion": "8.3.26-fusion.21",
   "iosSourceOnly": true,
   "iosNewIPAIncluded": false,
   "personalRebelBootIncluded": false,

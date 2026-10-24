@@ -93,7 +93,7 @@ def main():
     out = ROOT / 'output'
     out.mkdir(exist_ok=True)
     aligned = out / 'fusion-aligned.apk'
-    final = out / 'MotoNav-8.3.26-fusion.19.2.apk'
+    final = out / 'MotoNav-8.3.26-fusion.21.apk'
     run([bt / 'zipalign.exe', '-f', '4', ROOT / 'fusion-unsigned.apk', aligned])
     run([bt / 'apksigner.bat', 'sign', '--ks', key, '--ks-pass', 'pass:android',
          '--key-pass', 'pass:android', '--ks-key-alias', 'androiddebugkey', '--out', final, aligned])

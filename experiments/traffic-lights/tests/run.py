@@ -14,7 +14,7 @@ def java_tool(name):
 names = ['TrafficCountdown', 'TrafficSignalState', 'TrafficJunctionState',
          'TrafficSignalPacket', 'TrafficSignalBatchPacket', 'TrafficSignalPolicy',
          'TrafficSignalWrite', 'TrafficSignalOutputDelay', 'CarSignalAlignment',
-         'RouteAnchorSelector', 'MotorTrack', 'RouteCameraIndex', 'RouteSignalIndex']
+         'RouteAnchorSelector', 'MotorTrack', 'RouteCameraIndex', 'RouteRoadIndex', 'RouteSignalIndex']
 tests = sorted((root / 'tests').glob('Test*.java'))
 subprocess.run([java_tool('javac'), '-encoding', 'UTF-8', '-d', str(output),
                 *[str(source / (name + '.java')) for name in names],

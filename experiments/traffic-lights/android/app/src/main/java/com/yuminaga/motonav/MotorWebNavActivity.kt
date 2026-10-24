@@ -65,6 +65,7 @@ class MotorWebNavActivity : AppCompatActivity() {
     private lateinit var muteButton:TextView
     private lateinit var planButton:TextView
     private lateinit var settingsButton:TextView
+    private var providerButton:TextView?=null
     private lateinit var arrivedCard:LinearLayout
     private var pauseButton:TextView?=null
     private var simSpeedButton:TextView?=null
@@ -185,6 +186,15 @@ class MotorWebNavActivity : AppCompatActivity() {
         root.addView(settingsButton,FrameLayout.LayoutParams(dp(46),dp(46),Gravity.TOP or Gravity.END).apply{
             rightMargin=dp(12);topMargin=dp(204)
         })
+        if(packageName=="com.autonavi.amapauto") {
+            providerButton=circle("车机",S.CYAN).apply{
+                contentDescription="查看车机路口信息，导航继续"
+                setOnClickListener{NavigationUi.openProvider(this@MotorWebNavActivity)}
+            }
+            root.addView(providerButton,FrameLayout.LayoutParams(dp(46),dp(46),Gravity.TOP or Gravity.END).apply{
+                rightMargin=dp(12);topMargin=dp(262)
+            })
+        }
     }
     private fun positionSide(){
         if(!::turnCard.isInitialized || !::speedBox.isInitialized)return
@@ -192,6 +202,7 @@ class MotorWebNavActivity : AppCompatActivity() {
         (speedBox.layoutParams as FrameLayout.LayoutParams).topMargin=top
         (planButton.layoutParams as FrameLayout.LayoutParams).topMargin=top
         (settingsButton.layoutParams as FrameLayout.LayoutParams).topMargin=top+dp(58)
+        providerButton?.let{(it.layoutParams as FrameLayout.LayoutParams).topMargin=top+dp(116);it.requestLayout()}
         (signalBadge.layoutParams as FrameLayout.LayoutParams).topMargin=top+dp(72)
         signalBadge.requestLayout();speedBox.requestLayout();planButton.requestLayout();settingsButton.requestLayout()
     }
@@ -351,7 +362,7 @@ class MotorWebNavActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setMessage("结束这次摩托车导航？")
             .setPositiveButton("结束"){_,_->WebMotorGuide.stop();finish()}.setNegativeButton("继续导航",null).show()
     }
-    override fun onResume(){super.onResume();if(::map.isInitialized)map.onResume()}
+    override fun onResume(){super.onResume();FusionCarUi.closeConsole(this);if(::map.isInitialized)map.onResume()}
     override fun onPause(){if(::map.isInitialized)map.onPause();super.onPause()}
     override fun onSaveInstanceState(out:Bundle){if(::map.isInitialized)map.onSaveInstanceState(out);super.onSaveInstanceState(out)}
     override fun onDestroy(){handler.removeCallbacksAndMessages(null);if(::map.isInitialized)map.onDestroy();super.onDestroy()}

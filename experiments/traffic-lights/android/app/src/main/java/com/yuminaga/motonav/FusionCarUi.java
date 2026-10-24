@@ -7,8 +7,13 @@ import android.graphics.drawable.ColorDrawable;
 import android.os.*;
 import android.util.Log;
 import android.view.*;
+import android.widget.Button;
+import android.widget.FrameLayout;
 import java.io.File;
 import java.io.IOException;
+import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.WeakHashMap;
 
 /** Android-only adapter, safe in the provider process without loading MotoNav SDKs.
@@ -23,6 +28,7 @@ public final class FusionCarUi implements Application.ActivityLifecycleCallbacks
     private final WeakHashMap<Activity,Boolean> resumed=new WeakHashMap<>();
     private boolean warmed;
     private static File marker(Context c){return new File(c.getFilesDir(),MARKER);}
+    private static File firstSetup(Context c){return new File(c.getFilesDir(),"fusion-first-setup");}
     private static boolean console(Context c){return marker(c).isFile();}
     public static void install(Application app){app.registerActivityLifecycleCallbacks(new FusionCarUi());}
     /** Only gates the provider's floating WINDOW. Guidance/light callbacks stay enabled. */
@@ -43,7 +49,8 @@ public final class FusionCarUi implements Application.ActivityLifecycleCallbacks
     }
     public static void prepare(Context c){
         if(!"com.autonavi.amapauto".equals(c.getPackageName()))return;
-        marker(c).delete();
+        // Explicit inspection stays visible through background route retries.
+        // The return button / MotoNav resume closes it, rather than an engine request.
         try {
             Intent i=new Intent().setClassName(c.getPackageName(),
                 "com.autonavi.amapauto.background.AutoBackgroundService");
@@ -52,10 +59,51 @@ public final class FusionCarUi implements Application.ActivityLifecycleCallbacks
         } catch(RuntimeException e){Log.w("MotoNavProviderUi","background service unavailable",e);}
     }
     public static void openConsole(Context c){
-        try {marker(c).createNewFile();}
-        catch(IOException e){Log.w("MotoNavProviderUi","setup marker unavailable",e);return;}
+        openConsole(c,"com.yuminaga.motonav.MainActivity");
+    }
+    private static String returnClass(String name){
+        if("com.yuminaga.motonav.NavActivity".equals(name) ||
+           "com.yuminaga.motonav.MotorWebNavActivity".equals(name))return name;
+        return "com.yuminaga.motonav.MainActivity";
+    }
+    public static void openConsole(Context c,String destination){
+        try(FileOutputStream out=new FileOutputStream(marker(c))){
+            out.write(returnClass(destination).getBytes(StandardCharsets.UTF_8));
+        } catch(IOException e){throw new IllegalStateException("Console marker unavailable",e);}
         c.startActivity(new Intent().setClassName(c.getPackageName(),MAP)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP));
+    }
+    public static void openFirstSetup(Context c){
+        try {firstSetup(c).createNewFile();}
+        catch(IOException e){throw new IllegalStateException("Setup marker unavailable",e);}
+        openConsole(c);
+    }
+    public static void closeConsole(Context c){marker(c).delete();firstSetup(c).delete();}
+    private void addSetupReturn(Activity a){
+        if(!console(a))return;
+        ViewGroup content=a.findViewById(android.R.id.content);
+        if(content==null || content.findViewWithTag("motonav-setup-return")!=null)return;
+        Button button=new Button(a);button.setTag("motonav-setup-return");
+        button.setText("返回 MotoNav");button.setAllCaps(false);
+        button.setTextColor(Color.WHITE);button.setBackgroundColor(0xff352b47);
+        float density=a.getResources().getDisplayMetrics().density;
+        FrameLayout.LayoutParams p=new FrameLayout.LayoutParams((int)(160*density),(int)(48*density),Gravity.TOP|Gravity.END);
+        p.topMargin=(int)(8*density);p.rightMargin=(int)(8*density);
+        content.addView(button,p);
+        button.setOnClickListener(v->{
+            String destination="com.yuminaga.motonav.MainActivity";
+            try(FileInputStream in=new FileInputStream(marker(a))){
+                byte[] bytes=new byte[160];int n=in.read(bytes);
+                if(n>0)destination=returnClass(new String(bytes,0,n,StandardCharsets.UTF_8));
+            }catch(IOException e){Log.w("MotoNavProviderUi","Return destination unavailable",e);}
+            Intent back=new Intent().setClassName(a.getPackageName(),destination)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            // Clearing to MainActivity would destroy the live SDK navigation page.
+            if(!destination.endsWith(".MainActivity"))back.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            closeConsole(a);configure(a);
+            a.startActivity(back);
+            Log.i("MotoNavProviderUi","console-return target="+destination);
+        });
     }
     /** Keep the mandatory foreground-service notification; tapping returns MotoNav. */
     public static Notification notification(Context c,Notification original){
@@ -95,7 +143,7 @@ public final class FusionCarUi implements Application.ActivityLifecycleCallbacks
     @Override public void onActivityResumed(Activity a){
         if(!target(a))return;
         resumed.put(a,true);configure(a);
-        if(console(a)){Log.i("MotoNavProviderUi","explicit setup console visible");return;}
+        if(console(a)){addSetupReturn(a);Log.i("MotoNavProviderUi","explicit setup console visible");return;}
         Log.i("MotoNavProviderUi","provider resumed with transparent non-interactive window");
         handler.postDelayed(()->{
             if(a.isFinishing()||a.isDestroyed()||!Boolean.TRUE.equals(resumed.get(a))||console(a))return;

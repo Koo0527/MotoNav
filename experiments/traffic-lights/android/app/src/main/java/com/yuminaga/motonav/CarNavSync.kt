@@ -196,7 +196,7 @@ object CarNavSync {
         if(CarSignalAlignment.metres(expectedLat,expectedLng,endLat,endLng)>100)return "destination"
         if(!WebMotorGuide.guidanceFresh())return "web-position"
         return CarSignalAlignment.guideDisagreement(carRoad,carNextRoad,carIcon,carTurnMetres,carRemaining,
-            WebMotorGuide.currentRoad,WebMotorGuide.nextRoad,WebMotorGuide.direction,WebMotorGuide.turnMeters,WebMotorGuide.remaining)
+            WebMotorSignals.currentRoad().ifEmpty{WebMotorGuide.currentRoad},WebMotorGuide.nextRoad,WebMotorGuide.direction,WebMotorGuide.turnMeters,WebMotorGuide.remaining)
     }
     fun webAnchors(key:String)=if(webRouteKey==key)routeAnchors.map{it.clone()} else emptyList()
     fun webSummary():String {

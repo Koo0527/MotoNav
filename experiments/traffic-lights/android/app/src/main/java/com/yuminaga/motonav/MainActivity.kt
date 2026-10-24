@@ -146,7 +146,7 @@ import androidx.appcompat.app.AppCompatActivity
  *         设置分成「圆屏显示 / 导航语音 / 圆屏设置 / 地图 Key」四组，可折叠，收起时显示一行当前设置；
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  */
-const val APP_VERSION = "v8.3.26-fusion.19.2"
+const val APP_VERSION = "v8.3.26-fusion.21"
 
 class MainActivity : AppCompatActivity() {
     // ---------------- 配色（罪恶都市夜景：深紫黑底、霓虹粉、青色） ----------------
@@ -193,12 +193,16 @@ class MainActivity : AppCompatActivity() {
         if (hasPermissions()) NavService.start(this)
         refresh()
         // v7.5 来电显示开着、却没有电话权限（比如卸载重装后）：打开 App 时顺便要一下，不然来电显示悄悄失效
-        if (savedInstanceState == null && hasPermissions() && CallWatcher.enabled &&
+        if (savedInstanceState == null && !FusionFirstUse.shouldOpen(this) && hasPermissions() && CallWatcher.enabled &&
             checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED)
             handler.postDelayed({ requestPermissions(CallWatcher.PERMS, 7) }, 800)
         // v6.2 还没填高德 key：第一次打开直接弹出填写页
         // v6.5 打开 App 时还有 key 没填（第一次打开时两个都没填）：直接弹出填写页
-        if (savedInstanceState == null && !Keys.allFilled(this)) handler.post { showKeyDialog(first = true) }
+        val returningFromSetup=FusionFirstUse.returning(this)
+        if (savedInstanceState == null) handler.post {
+            if(FusionFirstUse.shouldOpen(this) && !NavigationUi.active())openProviderSetup()
+            else if(!returningFromSetup && !Keys.allFilled(this))showKeyDialog(first=true)
+        }
     }
 
     private lateinit var mainPages: MainPagesShell
@@ -354,16 +358,20 @@ class MainActivity : AppCompatActivity() {
     private fun setupCard(): View {
         val card = card()
         card.addView(label("出发前准备", 15f, TEXT, bold = true))
-        card.addView(label("完成下面两项后，锁屏也能稳定给圆屏发数据", 12f, SUB).apply { setPadding(0, dp(2), 0, dp(10)) })
+        card.addView(label("完成以下准备后，锁屏也能稳定给圆屏发数据", 12f, SUB).apply { setPadding(0, dp(2), 0, dp(10)) })
         val permBtn = pillButton("授予权限", PURPLE) { requestAllPermissions() }
         val batBtn = pillButton("电池设为「不限制」", PURPLE) { requestIgnoreBatteryOptimization() }
+        val providerBtn=pillButton("完成首次车机授权", PURPLE) { openProviderSetup() }
+        card.addView(providerBtn,lpMatch(bottom=8))
         card.addView(permBtn, lpMatch(bottom = 8))
         card.addView(batBtn, lpMatch())
         refreshers += {
             val p = hasPermissions(); val b = isIgnoringBatteryOptimization()
             permBtn.visibility = if (p) View.GONE else View.VISIBLE
             batBtn.visibility = if (b) View.GONE else View.VISIBLE
-            card.visibility = if (p && b) View.GONE else View.VISIBLE
+            val ready=FusionFirstUse.complete(this)
+            providerBtn.visibility=if(ready)View.GONE else View.VISIBLE
+            card.visibility = if (p && b && ready) View.GONE else View.VISIBLE
         }
         return wrapMargin(card)
     }
@@ -747,6 +755,9 @@ class MainActivity : AppCompatActivity() {
         val lightState=note("")
         card.addView(lightState)
         refreshers += { lightState.text=TrafficLightOverlay.summary() }
+        if(packageName=="com.autonavi.amapauto")card.addView(pillButton("查看车机路口信息",PURPLE){
+            NavigationUi.openProvider(this)
+        },lpMatch(top=4,bottom=8))
         card.addView(settingRow("路口灯显示", "同一快照的左转、直行、右转一起显示，缺项标暂无数据", label("整路口",12f,SUB)))
         card.addView(pillButton("预览路口灯布局（不显示秒数）", STROKE){
             if(BleLink.verified){BleLink.sendEvent("#TLP,1");Toast.makeText(this,"灰色占位预览，5 秒后恢复",Toast.LENGTH_SHORT).show()}
@@ -1226,7 +1237,7 @@ class MainActivity : AppCompatActivity() {
 
     /** 开发者选项：地图来源、屏幕速度、测试按钮、各种状态和原始数据 */
     private fun devSection(card: LinearLayout) {
-        card.addView(pillButton("路口服务初始化 / 高级诊断", STROKE) { FusionCarUi.openConsole(this) },
+        card.addView(pillButton("路口服务初始化 / 高级诊断", STROKE) { NavigationUi.openProvider(this) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(40)).apply { bottomMargin=dp(8) })
         // 状态（原来首页上的小地图行、帧率）
         val stat = label("", 12f, SUB).apply { setLineSpacing(0f, 1.15f) }
@@ -1556,7 +1567,28 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if(!FusionFirstUse.returning(this))FusionCarUi.closeConsole(this)
         if (searchInput?.text.isNullOrBlank()) refreshHomeIdle?.invoke()     // v6.3 选路线页回来：更新“最近去过”
+        if(FusionFirstUse.consumeReturn(this))handler.post {
+            if(isFinishing || isDestroyed)return@post
+            android.app.AlertDialog.Builder(this)
+                .setTitle("首次授权完成了吗？")
+                .setMessage("在车机界面阅读使用条款并自行确认，按提示授予定位等权限。看到地图首页后，点“已完成”；以后将直接使用 MotoNav。")
+                .setPositiveButton("已完成") { _,_->
+                    FusionFirstUse.finish(this)
+                    if(!Keys.allFilled(this))showKeyDialog(first=true)
+                }
+                .setNeutralButton("继续授权") { _,_->openProviderSetup() }
+                .setNegativeButton("稍后") { _,_->
+                    FusionFirstUse.later(this)
+                    if(!Keys.allFilled(this))showKeyDialog(first=true)
+                }
+                .setCancelable(false).show()
+        }
+    }
+
+    private fun openProviderSetup() {
+        runCatching{FusionFirstUse.open(this)}.onFailure{toast("授权界面暂未打开，可在首页重试")}
     }
 
     override fun onDestroy() {
