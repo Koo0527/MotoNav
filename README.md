@@ -2,6 +2,8 @@
 
 Android / iOS 手机配合 ESP32-S3 圆屏的导航项目。当前公开源码：**Android 8.3.26**、**红绿灯读秒实验 8.3.26-fusion.19.2**、**iOS 0.15.0**、**1.75 固件 7.12.9-junction.11（通用开机画面）**。1.85B 保留 7.12.3-185B，禁止混刷。Fresh 不包含在本次发布。
 
+**1.75 固件成品下载：[v7.12.9-junction.11 Release](https://github.com/zyn950929/MotoNav/releases/tag/firmware-v7.12.9-junction.11)**，含 Windows 一键烧录 ZIP、独立镜像、固件源码和 SHA256。仅适用微雪 1.75，不能用于 1.85B。
+
 [本轮完整更新说明与验证范围](docs/RELEASE-2026-10-25.md) · [安卓红绿灯实验版说明](experiments/traffic-lights/README.md) · [iOS 功能与构建说明](docs/RELEASE-IOS-0.15.0.md)
 
 **安卓红绿灯读秒属于实验功能，不保证一直有效。** 上游服务、账号权限、地区和路口覆盖、网络、后台限制及路线匹配变化都可能使它停止、缺失或不可用。无数据或核对不符时不补造读秒。任何导航图标和读秒都不能代替道路上的实际交通信号。
@@ -45,7 +47,7 @@ iOS 0.15.0 本轮仅公开源码，**尚未经过 Xcode 编译、没有新版 IP
 - **公开版使用通用 MotoNav／品牌开机动画，不包含个人 Rebel 500 开机图片**；保留旋转记忆、HID／AMS 音乐、歌词，以及电池五分钟无导航关机、插电不自动关机。
 - 本轮只更新 1.75；**1.85B 保持 7.12.3-185B，禁止混刷**。
 
-本次更新源码与说明，不新增 APK、IPA 或刷机 ZIP Release，历史下载保留原版本。安卓及通用固件已重新构建，相关策略回归通过；iOS 仅完成语法和工程静态检查，虚拟定位回放不等于实车路测。详见 [完整更新说明](docs/RELEASE-2026-10-25.md) 和 [验证记录](docs/VERIFY-2026-10-25.md)。
+本次源码及说明已公开，1.75 通用固件 v7.12.9-junction.11 已补发 [成品 Release](https://github.com/zyn950929/MotoNav/releases/tag/firmware-v7.12.9-junction.11)；安卓 APK、iOS IPA 本轮未发布，历史下载保留原版本。安卓及通用固件已重新构建，相关策略回归通过；iOS 仅完成语法和工程静态检查，虚拟定位回放不等于实车路测。详见 [完整更新说明](docs/RELEASE-2026-10-25.md) 和 [验证记录](docs/VERIFY-2026-10-25.md)。
 
 ![MotoNav 圆屏摩托车导航模拟效果](docs/media/mockups/hero-simulation.png)
 

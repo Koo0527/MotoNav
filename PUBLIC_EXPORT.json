@@ -43,7 +43,7 @@
   "firmwareReleaseNotes": "docs/RELEASE-FIRMWARE-7.12.9-junction.11.md",
   "iosSourceChangedThisUpdate": true,
   "freshIncluded": false,
-  "binaryReleaseIncludedThisUpdate": false,
+  "binaryReleaseIncludedThisUpdate": true,
   "latestAndroidDeviceTestVerified": false,
   "webMotorRealRoadTestVerified": false,
   "experimentalFirmwareBoards": [
@@ -73,5 +73,10 @@
   "publicGenericFirmwareApplicationBytes": 1286807,
   "publicGenericFirmwareStaticRAMBytes": 91876,
   "swiftSyntaxFiles": 62,
-  "swiftSyntaxErrors": 0
+  "swiftSyntaxErrors": 0,
+  "firmwareReleaseTag": "firmware-v7.12.9-junction.11",
+  "firmwareReleaseURL": "https://github.com/zyn950929/MotoNav/releases/tag/firmware-v7.12.9-junction.11",
+  "firmwareFlasherVerifyOnlyPassed": true,
+  "firmwareBinaryDeviceTested": false,
+  "firmwareMacFlashPolicyTests": 6
 }

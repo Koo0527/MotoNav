@@ -1,6 +1,6 @@
-# 当前 1.75 固件源码：7.12.9-junction.11
+# 当前 1.75 通用固件：7.12.9-junction.11
 
-[最新通用版、构建方式及验证范围](../docs/RELEASE-FIRMWARE-7.12.9-junction.11.md)。公开源码不含个人 Rebel 500 开机资源。1.85B 保持 7.12.3-185B。下列 Release 链接是历史版本，不能当作最新源码对应镜像。
+[最新通用版、构建方式及验证范围](../docs/RELEASE-FIRMWARE-7.12.9-junction.11.md)。公开源码不含个人 Rebel 500 开机资源。1.85B 保持 7.12.3-185B。**最新成品：[v7.12.9-junction.11 Release](https://github.com/zyn950929/MotoNav/releases/tag/firmware-v7.12.9-junction.11)**。下方 7.12.1 下载是历史版本。
 
 ---
 
