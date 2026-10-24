@@ -38,7 +38,7 @@ def main():
     if not 1 <= args.jobs <= 32:
         parser.error('--jobs must be between 1 and 32')
     source = ROOT / 'boards/175/MotoNav'
-    version = re.search(r'^#define FW_VERSION "v([^\"]+)"', (source / 'MotoNav.ino').read_text(), re.MULTILINE).group(1)
+    version = re.search(r'^#define FW_VERSION "v([^\"]+)"', (source / 'src/core/FirmwareConfig.h').read_text(), re.MULTILINE).group(1)
     build = ROOT / '.build' / 'universal' / '175'
     output = build / 'output'
     output.mkdir(parents=True, exist_ok=True)

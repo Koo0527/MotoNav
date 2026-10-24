@@ -1,3 +1,9 @@
+# 当前 1.75 固件源码：7.12.9-junction.11
+
+[最新通用版、构建方式及验证范围](../docs/RELEASE-FIRMWARE-7.12.9-junction.11.md)。公开源码不含个人 Rebel 500 开机资源。1.85B 保持 7.12.3-185B。下列 Release 链接是历史版本，不能当作最新源码对应镜像。
+
+---
+
 # 通用圆屏固件 7.12.1
 
 适用微雪 ESP32-S3-Touch-AMOLED-1.75（466×466），Android 8.3.21 公开源码/分享打包版与 iOS 0.13.8 共用。源码位于 `boards/175/MotoNav`，本次融合不适用于 1.85B 或 M5Stack StopWatch。

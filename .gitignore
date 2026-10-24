@@ -37,3 +37,8 @@ private*
 
 __pycache__/
 *.pyc
+
+*.pk8
+*.x509.pem
+*.idsig
+*.class
