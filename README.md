@@ -12,6 +12,14 @@ iOS 0.15.0 本轮仅公开源码，**尚未经过 Xcode 编译、没有新版 IP
 
 ## 本次更新（2026-10-25）
 
+本轮开发测试截图（安卓手机实机截图，模拟／定位回放，部分为中间版本；并非 iOS 或圆屏拍照）：
+
+| 导航地图与模拟控制 | 路口读秒接入 | 导航中修改设置 | 电子眼与路口标记 |
+| :---: | :---: | :---: | :---: |
+| <img src="docs/media/updates/2026-10-25/navigation-simulation.png" width="200" alt="安卓模拟导航地图与暂停、调速控制，fusion.11 测试截图"> | <img src="docs/media/updates/2026-10-25/junction-countdown.png" width="200" alt="fusion.16 定位回放中直行绿灯16秒，左右转暂无数据"> | <img src="docs/media/updates/2026-10-25/navigation-settings.png" width="200" alt="返回导航入口与导航继续运行时的语音设置，fusion.11"> | <img src="docs/media/updates/2026-10-25/map-cameras.png" width="200" alt="fusion.17.2 测试中的导航地图、电子眼和路口标记"> |
+
+读秒图来自融合版迭代过程，其中车机悬浮卡片仍可见；后续版本已处理普通使用时的隐藏。截图不代表最新界面的所有细节或真实道路验证。**读秒不保证一直有效**，完整说明见 [截图说明](docs/MEDIA-UPDATE-2026-10-25.md)。
+
 ### 安卓原版 8.3.26
 
 - **摩托车规划不用先进入网页**：直接在 App 输入起点、目的地和途经点，后台读取高德网页摩托车路线，在 App 内预览并选择方案。遇到登录或验证时仍需本人完成，登录会话保存在本机。

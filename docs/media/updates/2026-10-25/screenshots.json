@@ -1,0 +1,34 @@
+[
+  {
+    "file": "navigation-simulation.png",
+    "title": "导航地图与模拟控制",
+    "capture": "2026-10-24 Android device screenshot during development testing",
+    "version": "8.3.26-fusion.11",
+    "imageEdited": false,
+    "sha256": "87caef2baa5d4c4fbed7ec97bcce01df893765fe7419c382f16dc2aa8076e912"
+  },
+  {
+    "file": "junction-countdown.png",
+    "title": "路口真实读秒接入的定位回放",
+    "capture": "2026-10-24 Android device screenshot during development testing",
+    "version": "8.3.26-fusion.16",
+    "imageEdited": false,
+    "sha256": "2d5336b3451860581488a036e6aad4deb0f6c84798bcbb609cf0e94dfe7e2144"
+  },
+  {
+    "file": "navigation-settings.png",
+    "title": "导航继续运行时进入语音设置",
+    "capture": "2026-10-24 Android device screenshot during development testing",
+    "version": "8.3.26-fusion.11",
+    "imageEdited": false,
+    "sha256": "dc0645427185712387660bd729281eaf9b86b77144b0646e476a30ab2d811053"
+  },
+  {
+    "file": "map-cameras.png",
+    "title": "导航地图电子眼与路口标记",
+    "capture": "2026-10-24 Android device screenshot during development testing",
+    "version": "8.3.26-fusion.17.2",
+    "imageEdited": false,
+    "sha256": "54b466fdba7c407ee8fcd648ebe633704e54de6082944ebd7ecb980d755eaae7"
+  }
+]
