@@ -46,7 +46,9 @@ def main():
     subprocess.run([args.cli, 'compile', '--jobs', str(args.jobs), '--libraries', str(ROOT / 'libraries'),
                     '--build-path', str(build / 'build'), '--fqbn', FQBN,
                     '--build-property', 'compiler.c.extra_flags=' + prefix_map,
-                    '--build-property', 'compiler.cpp.extra_flags=' + prefix_map, '--output-dir', str(output), str(source)], check=True)
+                    '--build-property', 'compiler.cpp.extra_flags=' + prefix_map,
+                    '--build-property', 'compiler.c.elf.extra_flags=-Wl,--wrap=xTaskCreatePinnedToCore',
+                    '--output-dir', str(output), str(source)], check=True)
     print(package(output, ROOT / 'dist/175/panel0', version))
 
 
