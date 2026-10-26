@@ -14,7 +14,11 @@
 
 ## 依赖与公开范围
 
-除常规 Android SDK 外，完整包还需要用户自行准备兼容数据组件。公开仓库包含本项目代码、原生路径读取代码、资源与构建工具，以及对指定输入的最小集成增量；**不包含原始第三方 APK、完整反编译源码、维护者个人 Key 或签名**。
+除常规 Android SDK 外，完整包还需要兼容数据组件。现在完整构建入口会**自动下载 `provider.apk` 到 `android/countdown/inputs/provider.apk`，并校验大小与 SHA256**；已有匹配文件会直接复用，新手不用另外找 APK 或填写路径。
+
+组件下载：[provider.apk](https://github.com/zyn950929/MotoNav/releases/download/countdown-provider-9.5.13/provider.apk) · [组件发布页](https://github.com/zyn950929/MotoNav/releases/tag/countdown-provider-9.5.13)。约 148 MiB，超过 GitHub 普通 Git 文件大小限制，因此保存在此仓库的 Release 附件，代码目录保留下载清单 `provider.json`。**它只是电脑构建输入，不要当作最终 MotoNav 安装包。**
+
+Git 代码目录包含本项目代码、原生路径读取代码、资源、构建工具和对指定输入的最小集成增量；不包含完整反编译源码、维护者个人 Key 或签名。第三方组件单独作为构建依赖提供，不归入本项目自主代码许可。
 
 输入仅支持已验证的配套 9.5.13 APK，其 SHA256 为：
 
@@ -22,19 +26,37 @@
 f0fe164279a6d60bd83d926a32d47f335f044faf9c0d37564b49655e95db0141
 ```
 
-输入不符会在修改前拒绝。附件中未提供完整的补丁作者和许可信息，本项目不将第三方组件或补丁声明为自主开源代码；请自行确认取得和使用授权。高德 SDK 与相关服务适用其自身条款。普通版不需要这份额外组件。
+输入不符会在修改前拒绝。该文件为用户提供的配套 9.5.13 补丁版本，未随附完整的补丁作者和许可信息；本项目不将第三方组件或补丁声明为自主开源代码，发布构建依赖不变更其权利归属及适用条款。高德 SDK 与相关服务适用其自身条款。普通版不下载或使用这份额外组件。
 
 ## 构建完整 APK（Windows）
 
-准备 Python 3、JDK 17、Android SDK 35 / build-tools 35.0.0、Gradle 8.10.2、apktool 2.12.1 和 Zig 0.13.0。Zig 用于从 `native-route/route_bridge.cpp` 编译本项目的路径读取库，仓库不提交本地生成的库和输入 APK。
+准备 Python 3、JDK 17、Android SDK 35 / build-tools 35.0.0、Gradle 8.10.2、apktool 2.12.1 和 Zig 0.13.0。Zig 用于从 `native-route/route_bridge.cpp` 编译本项目的路径读取库，Git 不提交本地生成的库或下载缓存。
 
 根目录执行 `一键打包-读秒版.bat`，依提示提供本机工具路径；也可在本目录运行：
 
 ```powershell
-python build-countdown.py --provider 'D:\Inputs\provider.apk' --apktool 'D:\Tools\apktool.jar' --gradle 'D:\Tools\gradle-8.10.2\bin\gradle.bat' --sdk 'D:\Android\Sdk' --java-home 'D:\Tools\jdk-17' --zig 'D:\Tools\zig-0.13.0\zig.exe'
+python build-countdown.py --apktool 'D:\Tools\apktool.jar' --gradle 'D:\Tools\gradle-8.10.2\bin\gradle.bat' --sdk 'D:\Android\Sdk' --java-home 'D:\Tools\jdk-17' --zig 'D:\Tools\zig-0.13.0\zig.exe'
 ```
 
-依赖已经缓存时可加 `--offline`。脚本校验输入、应用增量、构建路径读取库、编译自主源码、检查资源与重复类，并用本机新生成的开发签名签署最终包。
+首次联网时自动下载组件，下载完成前不会开始集成。下载失败会重试三次并提示直接下载地址；也可手动把同名文件放到 `inputs/provider.apk`。需要使用其他保存位置时，Python 入口可加 `--provider 'D:\Inputs\provider.apk'`，根目录 PowerShell 入口可加 `-ProviderPath`；仍必须通过相同校验。
+
+只有组件和其他依赖**全部已缓存**时才加 `--offline`；离线缺文件会明确报错，不偷偷联网。脚本校验输入、应用增量、构建路径读取库、编译自主源码、检查资源与重复类，并用本机新生成的开发签名签署最终包。单独预下载及校验组件可运行 `python android/countdown/provider_download.py`（仓库根目录）。
+
+## 让 WorkBuddy 帮忙打包（新手推荐）
+
+安装并打开 WorkBuddy，选择一个本地工作文件夹，把下面整段发送给它；无需提前手动下载组件：
+
+从安装工具、申请 Key 到烧录圆屏的完整步骤，见 [安卓小白 PDF 教程](../../docs/MotoNav-Android-WorkBuddy-Guide.pdf)。
+
+```text
+请从 https://github.com/zyn950929/MotoNav 获取最新源码，打包读秒版 8.3.26-single.29，工程在 android/countdown。
+请准备需要的 Python 3、JDK 17、Android SDK 35/build-tools 35.0.0、Gradle 8.10.2、apktool 2.12.1 和 Zig 0.13.0；下载慢时换可信国内镜像。
+使用根目录“一键打包-读秒版.bat”或 Build-Countdown.ps1 完成完整构建，让脚本自动从仓库 Release 获取并校验 provider.apk，不要只交付 Gradle 中间 APK。
+最终包名保持 com.autonavi.amapauto，生成并保留我的本机签名；已有签名就沿用。请检查最终安装包及签名，告诉我 APK 完整路径、包名和最终签名证书的十六进制 SHA1（不是 APK 文件哈希），保存 Application-info.txt，并帮我打开成品文件夹。
+不要修改功能，不要上传我的签名、Key 或登录资料。
+```
+
+## 成品与升级资料
 
 成品是 **`output/MotoNav-8.3.26-single.29-countdown.apk`**。`app/build/outputs/` 中的 Gradle APK 只是中间文件，不能当完整读秒版安装。Android Studio 可以打开本目录编辑和编译自主源码；完整包仍由上面的入口生成。
 

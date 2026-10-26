@@ -54,5 +54,7 @@ jobs:
         run: gradle --no-daemon assembleDebug
       - name: Countdown and route policy regressions
         run: python android/countdown/tests/run.py
+      - name: Pinned provider download and offline checks
+        run: python android/countdown/tests/test_provider_download.py
       - name: Explain full build input
-        run: Write-Host 'Full APK build needs a user-supplied compatible dependency; this job does not publish an intermediate APK.'
+        run: Write-Host 'The full builder downloads its pinned provider.apk from Releases; this source-only job does not publish an intermediate APK.'

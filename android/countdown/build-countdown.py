@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the countdown edition from MotoNav source and a user-supplied pinned dependency."""
+"""Build the countdown edition, automatically fetching its pinned dependency if needed."""
 import argparse
 import hashlib
 import json
@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from provider_download import resolve_provider
 
 ROOT=Path(__file__).resolve().parent
 VERSION='8.3.26-single.29'
@@ -32,7 +33,7 @@ def patch_dependency():
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--provider',required=True,type=Path)
+    parser.add_argument('--provider',type=Path,help='Optional existing APK; otherwise download to inputs/provider.apk')
     parser.add_argument('--apktool',required=True,type=Path)
     parser.add_argument('--gradle',required=True,type=Path)
     parser.add_argument('--sdk',required=True,type=Path)
@@ -42,8 +43,10 @@ def main():
     args=parser.parse_args()
     if os.name!='nt':parser.error('The complete countdown builder currently supports Windows only.')
     spec=json.loads((ROOT/'provider-integration-deltas.json').read_text('utf8'))
-    if sha(args.provider.read_bytes())!=spec['providerSHA256']:
-        parser.error('The input APK does not match the supported dependency SHA256. No patch was applied.')
+    try:
+        args.provider=resolve_provider(args.provider,offline=args.offline)
+    except (ValueError,OSError) as error:
+        parser.error(str(error))
     os.environ['JAVA_HOME']=str(args.java_home.resolve())
     os.environ['ANDROID_SDK_ROOT']=str(args.sdk.resolve())
     os.environ['ANDROID_HOME']=os.environ['ANDROID_SDK_ROOT']

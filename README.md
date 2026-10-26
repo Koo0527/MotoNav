@@ -5,7 +5,7 @@
 | 选择 | 当前版本 | 源码与构建说明 | 需要什么 |
 | --- | --- | --- | --- |
 | **普通版，不带读秒** | **8.3.26** | [android/standard](android/standard/README.md) | 本人的包名、签名及高德 Android Key；根目录一键打包默认生成此版 |
-| **读秒版** | **8.3.26-single.29** | [android/countdown](android/countdown/README.md) | 同样需自己的 Key 和签名，另需自行准备兼容数据组件；必须使用完整构建入口 |
+| **读秒版** | **8.3.26-single.29** | [android/countdown](android/countdown/README.md) | 同样需自己的 Key 和签名；完整构建入口自动获取 provider.apk，无需另找组件 |
 | **1.75 圆屏通用固件** | **7.12.10-pages.4** | [固件说明](firmware/README.md) · [更新详情](docs/RELEASE-FIRMWARE-7.12.10-pages.4.md) | 微雪 ESP32-S3-Touch-AMOLED-1.75；不能刷到 1.85B 或 M5Stack |
 
 **固件下载：[7.12.10-pages.4 Release](https://github.com/zyn950929/MotoNav/releases/tag/firmware-v7.12.10-pages.4)**。Windows 下载 `MotoNav-1.75-v7.12.10-pages.4-Universal-Flasher.zip`，完整解压后双击“一键烧录.bat”。默认应用升级保留设置和配对；首次完整安装会整片擦除，按提示先确认板型和备份。
@@ -26,8 +26,10 @@
 
 ## 新用户怎么选、怎么打包
 
+**[下载安卓小白 PDF 教程（普通版与读秒版分别说明）](docs/MotoNav-Android-WorkBuddy-Guide.pdf)**。两版都提供可直接复制给 WorkBuddy 的提示词；读秒组件现在自动获取，无需自己找文件。
+
 1. **不需要读秒**：双击根目录 `一键打包.bat`／`一键打包-普通版.bat`，或让编译工具构建 `android/standard`。成品在根目录 `output/`。
-2. **需要读秒**：先看 `android/countdown/README.md` 的依赖要求，再运行 `一键打包-读秒版.bat` 或该目录的 `build-countdown.py`。直接 Gradle 生成的是中间 APK，不能当完整安装包。成品在 `android/countdown/output/`。
+2. **需要读秒**：按 [读秒版 WorkBuddy 提示词](android/countdown/README.md#让-workbuddy-帮忙打包新手推荐)准备环境，再运行 `一键打包-读秒版.bat` 或该目录的 `build-countdown.py`。脚本自动从 [组件 Release](https://github.com/zyn950929/MotoNav/releases/tag/countdown-provider-9.5.13)下载并校验 `provider.apk`，放入 `android/countdown/inputs/`，以后复用缓存。直接 Gradle 生成的是中间 APK，不能当完整安装包。成品在 `android/countdown/output/`。组件是第三方构建依赖，不属于本项目自主开源代码。
 3. **申请 Key**：以每次实际打包输出的**包名和证书十六进制 SHA1**申请本人高德 Android Key，在 App 的地图 Key 页面填写。普通版可生成个人包名；读秒完整包固定为 `com.autonavi.amapauto`，SHA1 由本人的签名决定。地图不再使用天地图，不需要天地图 Key。不要照抄维护者或别人的 SHA1。
 4. **保存升级身份**：普通版备份 `android/standard/personal.properties` 和 `keystore/`；读秒版备份 `android/countdown/.local/debug.keystore`。这些文件只留在自己电脑，后续覆盖升级沿用原包名和签名。
 5. **烧录 1.75**：使用上面的独立 ZIP。日常升级选默认应用升级；首次／救砖完整安装会清空数据。同一固件基础导航协议供两种安卓使用；iOS 本轮没有新增时钟适配或真机复测，原源码与原有功能保留。
