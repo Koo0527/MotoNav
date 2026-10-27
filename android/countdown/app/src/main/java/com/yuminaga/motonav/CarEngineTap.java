@@ -22,6 +22,16 @@ public final class CarEngineTap {
     private static long errorAt;
     private static long stateAt, positionAt;
     private static int routeInfoSequence;
+    private static long syncLease(Application app,long now){
+        File f=new File(app.getFilesDir(),"car-nav-sync-enabled");
+        if(!f.isFile()||f.length()>96)return 0;
+        try(java.io.FileInputStream in=new java.io.FileInputStream(f)){
+            byte[] b=new byte[96];int n=in.read(b);
+            String[] values=new String(b,0,n,StandardCharsets.UTF_8).split("\\n");
+            long token=Long.parseLong(values[0]),until=Long.parseLong(values[1]);
+            return token>0&&token<=now&&until>=now&&until-now<=15000?token:0;
+        }catch(Exception e){return 0;}
+    }
     private static boolean single(Application app){return new File(app.getFilesDir(),"single-engine-enabled").isFile();}
     private static Application app() throws Exception {
         return (Application)Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null);
@@ -78,6 +88,7 @@ public final class CarEngineTap {
         // Terminal commands must be consumed even after MotoNav releases ownership.
         NativeRouteBridge.applySimulationCommand(app);
         boolean owner=single(app),probe=false;
+        long syncToken=syncLease(app,now);
         try{
             File f=new File(app.getFilesDir(),"single-engine-probe");
             if((app.getApplicationInfo().flags&2)!=0&&f.isFile()){
@@ -87,11 +98,13 @@ public final class CarEngineTap {
                 probe=until>=now&&until-now<=120000;
             }
         }catch(Exception ignored){}
-        if(!owner&&!probe)return;stateAt=now;
+        if(!owner&&!probe&&syncToken==0)return;stateAt=now;
         try {
             Class<?> c=Class.forName("com.autonavi.amapauto.jni.AndroidDriveNavigation");
             boolean real=Boolean.TRUE.equals(c.getMethod("isInNavi").invoke(null));
             boolean sim=Boolean.TRUE.equals(c.getMethod("isInSimulateNavi").invoke(null));
+            if(syncToken>0)emit(app,event(app,"engine").putExtra("syncToken",syncToken)
+                .putExtra("real",real).putExtra("simulation",sim));
             if(probe){
                 JSONObject state=new JSONObject().put("at",now).put("real",real).put("simulation",sim);
                 try(FileOutputStream out=new FileOutputStream(new File(app.getFilesDir(),"single-engine-probe-state.json"))){out.write(state.toString().getBytes(StandardCharsets.UTF_8));}

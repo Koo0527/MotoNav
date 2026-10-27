@@ -11,7 +11,7 @@ import sys
 from provider_download import resolve_provider
 
 ROOT=Path(__file__).resolve().parent
-VERSION='8.3.26-single.29'
+VERSION='8.3.26-single.30'
 sha=lambda b:hashlib.sha256(b).hexdigest()
 
 def patch_dependency():

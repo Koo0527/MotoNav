@@ -39,8 +39,8 @@ android {
         applicationId = "com.yuminaga.motonav"
         minSdk = 28
         targetSdk = 35
-        versionCode = 179
-        versionName = "8.3.26-single.29"
+        versionCode = 180
+        versionName = "8.3.26-single.30"
         ndk { abiFilters += setOf("arm64-v8a") }
     }
 

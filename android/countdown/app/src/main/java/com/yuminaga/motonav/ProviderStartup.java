@@ -4,11 +4,11 @@ package com.yuminaga.motonav;
 public final class ProviderStartup {
     public static final int NONE=0,WARM=1,PLAN=2,START=3,FAILED=4;
     private long begun,warmedAt,planAt,startAt;
-    private int warms,plans,starts;
+    private int warms,plans,starts,recoveries;
     private boolean active,ready,running,choosing;
     public void begin(long now){begin(now,false);}
     public void begin(long now,boolean choose){stop();active=true;begun=now;choosing=choose;}
-    public void stop(){active=false;ready=false;running=false;choosing=false;warms=plans=starts=0;}
+    public void stop(){active=false;ready=false;running=false;choosing=false;warms=plans=starts=recoveries=0;}
     public boolean choosing(){return active&&choosing;}
     public boolean calculatedRoute(){return active&&ready;}
     public void confirm(long now){if(active&&choosing&&ready){choosing=false;begun=now;starts=0;}}
@@ -18,6 +18,13 @@ public final class ProviderStartup {
     public boolean running(){return running;}
     public int plans(){return plans;}
     public int starts(){return starts;}
+    public int recoveries(){return recoveries;}
+    /** Only the owning caller's fresh native stopped state may request this. */
+    public boolean recoverStoppedEngine(long now){
+        if(!active||!running||choosing||recoveries>=2)return false;
+        recoveries++;begun=now;ready=running=false;warms=plans=starts=0;
+        return true;
+    }
     public int next(long now,boolean engineReady,boolean guideAcknowledged){
         if(!active)return NONE;
         if(guideAcknowledged&&acceptsGuide()){running=true;return NONE;}
