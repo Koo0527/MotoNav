@@ -80,7 +80,7 @@ final class BleLink: NSObject, ObservableObject {
             self?.checkConnectionSetup()
             self?.requestBuildingCapability()
             MusicBridge.shared.syncLyrics()
-            self?.syncClock(false)
+            self?.syncClock(force: false)
             guard let self = self, self.isReady, self.queue.isEmpty, !self.bulkQ.hasData,
                   Date().timeIntervalSince(self.lastWriteAt) > 1.5 else { return }
             self.send("P")
@@ -378,7 +378,7 @@ final class BleLink: NSObject, ObservableObject {
         for (slot, img) in lastImg { enqueueImage(slot: slot, w: img.w, h: img.h, data: img.data) }
         pump()
         Settings.shared.pushAll()
-        syncClock(true)
+        syncClock(force: true)
         requestBuildingCapability()
         MapFeeder.shared.resendAll()                    // 圆屏可能重启过：地图块和路线重发
     }
