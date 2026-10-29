@@ -30,6 +30,9 @@ final class BleLink: NSObject, ObservableObject {
     private var verified = false
     private var buildingProbe = BleCapabilityProbe()
     private var buildingQueries: Int { buildingProbe.attempts }
+    // 圆屏大字时钟校时（#TIME）：与安卓 syncClock 同节奏——连上立即一次，心跳里每 60 秒最多一次
+    private var clockSyncUptime = 0.0
+    private var clockSyncOffset = Int.max
     private var txNotifyReady = false
     @Published private(set) var buildingsSupported = false
     @Published var isReady = false
@@ -77,6 +80,7 @@ final class BleLink: NSObject, ObservableObject {
             self?.checkConnectionSetup()
             self?.requestBuildingCapability()
             MusicBridge.shared.syncLyrics()
+            self?.syncClock(false)
             guard let self = self, self.isReady, self.queue.isEmpty, !self.bulkQ.hasData,
                   Date().timeIntervalSince(self.lastWriteAt) > 1.5 else { return }
             self.send("P")
@@ -374,8 +378,22 @@ final class BleLink: NSObject, ObservableObject {
         for (slot, img) in lastImg { enqueueImage(slot: slot, w: img.w, h: img.h, data: img.data) }
         pump()
         Settings.shared.pushAll()
+        syncClock(true)
         requestBuildingCapability()
         MapFeeder.shared.resendAll()                    // 圆屏可能重启过：地图块和路线重发
+    }
+
+    /// 此命令永不缓存重放：重连必须使用当前墙上时间（与安卓 syncClock 行为一致）。
+    private func syncClock(force: Bool) {
+        guard isReady, verified else { return }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let wall = Int64(Date().timeIntervalSince1970 * 1000)
+        let offset = TimeZone.current.secondsFromGMT(for: Date())
+        if !force, uptime - clockSyncUptime < 60, offset == clockSyncOffset { return }
+        guard let wire = PhoneClockWire.encode(wallMillis: wall, offsetSeconds: offset) else { return }
+        enqueue("CLOCK", Data(wire.utf8))
+        clockSyncUptime = uptime; clockSyncOffset = offset
+        pump()
     }
 }
 
