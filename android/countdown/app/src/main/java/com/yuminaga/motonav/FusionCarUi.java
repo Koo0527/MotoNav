@@ -46,6 +46,10 @@ public final class FusionCarUi implements Application.ActivityLifecycleCallbacks
         catch(ReflectiveOperationException|LinkageError e){return false;}
     }
     public static void install(Application app){
+        // AppComponentFactory also instantiates :locationservice and :push.
+        // Their JNI state/readiness is not the actual navigation engine's state.
+        String process=Application.getProcessName();
+        if(process==null||process.indexOf(':')>=0)return;
         FusionCarUi ui=new FusionCarUi();app.registerActivityLifecycleCallbacks(ui);
         // Run in the provider process: never load its JNI/Application in :motonav.
         ui.handler.post(new Runnable(){public void run(){
@@ -87,7 +91,7 @@ public final class FusionCarUi implements Application.ActivityLifecycleCallbacks
         Log.i("MotoNavProviderUi","provider float masked; native initialization/subscriptions preserved");
     }
     public static void prepare(Context c){
-        if(!"com.autonavi.amapauto".equals(c.getPackageName()))return;
+        if(!"com.motonav.app.fresh".equals(c.getPackageName()))return;
         // Explicit inspection stays visible through background route retries.
         // The return button / MotoNav resume closes it, rather than an engine request.
         try {
@@ -147,7 +151,7 @@ public final class FusionCarUi implements Application.ActivityLifecycleCallbacks
     }
     /** Keep the mandatory foreground-service notification; tapping returns MotoNav. */
     public static Notification notification(Context c,Notification original){
-        if(!"com.autonavi.amapauto".equals(c.getPackageName()))return original;
+        if(!"com.motonav.app.fresh".equals(c.getPackageName()))return original;
         NotificationManager manager=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
         if(Build.VERSION.SDK_INT>=26)manager.createNotificationChannel(
             new NotificationChannel(CHANNEL,"MotoNav 路口信息",NotificationManager.IMPORTANCE_LOW));

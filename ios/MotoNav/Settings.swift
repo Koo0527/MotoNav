@@ -8,11 +8,11 @@ final class Settings: ObservableObject {
     private let ud = UserDefaults.standard
 
     /// 风格编号（和固件一样）；列表顺序
-    static let themeOrder = [1, 0, 5, 11]
+    static let themeOrder = [1, 0, 5, 11, 2, 3, 4, 6, 7, 8, 9, 10]
     static func themeName(_ t: Int) -> String {
         switch t {
         case 11: return "龙珠雷达"
-        case 0: return "原版"; case 2: return "GTA5"; case 3: return "赛博霓虹"; case 4: return "复古纸地图"
+        case 0: return "原版"; case 2: return "GTA5"; case 3: return "赛博朋克"; case 4: return "复古纸地图"
         case 5: return "极简黑白"; case 6: return "蓝图"; case 7: return "掌机像素"; case 8: return "雷达"
         case 9: return "寻宝罗盘"; case 10: return "卫星图"; default: return "罪恶都市"
         }
@@ -22,8 +22,8 @@ final class Settings: ObservableObject {
         switch t {
         case 11: return "绿色雷达、路线与目标；不下载底图"
         case 0: return "高德默认底图与标注，按圆屏16色传输"
-        case 2: return "深色地面、浅色道路、紫色路线"
-        case 3: return "黑底青色道路、品红路线，夜里最酷"
+        case 2: return "深色地面、浅色道路、紫色路线，可叠加建筑"
+        case 3: return "深色地面、青色道路、淡黄点状路线，可叠加建筑"
         case 4: return "米黄纸色，白天太阳下最清楚；夜间配色时自动换成霓虹"
         case 5: return "独立黑白道路网和导航路线，不含建筑、绿地、水面和文字"
         case 6: return "深蓝底 + 跟着地图走的网格"
@@ -31,7 +31,7 @@ final class Settings: ObservableObject {
         case 8: return "墨绿单色 + 转动的扫描线和距离圈"
         case 9: return "六边形网格、罗盘刻度、目的地菱形脉冲"
         case 10: return "高德卫星照片（数据大，范围小一些；要填高德 key）"
-        default: return "暖沙色街区、粉紫路线（默认）"
+        default: return "浅色街区、深色道路、粉紫路线，可叠加建筑（默认）"
         }
     }
 
@@ -51,9 +51,12 @@ final class Settings: ObservableObject {
     @Published var theme: Int {
         didSet {
             ud.set(theme, forKey: "map_theme")
-            BleLink.shared.send("#t,\(theme)")
+            BleLink.shared.send(MapStyleTransfer.command(theme))
             // 卫星图和普通地图的数据不一样：切换时重新下载
-            if oldValue != theme { MapFeeder.shared.resetChunk() }
+            if oldValue != theme {
+                MapSampleReport.shared.failIfWaiting("风格已切换，请重新生成对照图。")
+                MapFeeder.shared.resetChunk()
+            }
         }
     }
     // iOS v0.2 小地图
@@ -102,7 +105,50 @@ final class Settings: ObservableObject {
     /// iOS v0.4 亮度跟着昼夜自动（和安卓版一样：日出后用白天亮度，日落后用夜间亮度）
     @Published var brightAuto: Bool { didSet { ud.set(brightAuto, forKey: "bright_auto"); sendBrightness() } }
     @Published var brightDay: Double { didSet { ud.set(brightDay, forKey: "bright_day"); if brightAuto { sendBrightness() } } }
-    @Published var brightNight: Double { didSet { ud.set(brightNight, forKey: "bright_night"); if brightAuto { sendBrightness() } } }
+    @Published var brightNight: Double { didSet { ud.set(brightNight, forKey: "bright_night"); if brightAuto || tunnelDimmed { sendBrightness() } } }
+    @Published var tunnelAuto: Bool {
+        didSet {
+            ud.set(tunnelAuto, forKey: "tunnel_auto")
+            if oldValue != tunnelAuto { resetTunnel() }
+        }
+    }
+    @Published private(set) var tunnelDimmed = false
+    private var tunnelPolicy = TunnelDimmingPolicy()
+    private var tunnelOverride: Bool?
+
+    func updateTunnel(_ evidence: TunnelEvidence, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard tunnelAuto else { return }
+        let wasDimmed = tunnelPolicy.isDimmed
+        let dimmed = tunnelPolicy.update(evidence, now: now)
+        if wasDimmed && !dimmed { tunnelOverride = nil }
+        refreshTunnel()
+    }
+
+    func toggleTunnelMode() { setTunnelMode(!tunnelDimmed) }
+
+    func setTunnelMode(_ dimmed: Bool) {
+        tunnelOverride = dimmed == (tunnelAuto && tunnelPolicy.isDimmed) ? nil : dimmed
+        refreshTunnel()
+    }
+
+    func resetTunnel() {
+        tunnelPolicy.reset()
+        tunnelOverride = nil
+        fadeTimer?.invalidate()
+        fadeTimer = nil
+        fadeTarget = nil
+        refreshTunnel()
+    }
+
+    private func refreshTunnel() {
+        let dimmed = tunnelOverride ?? (tunnelAuto && tunnelPolicy.isDimmed)
+        if tunnelDimmed != dimmed {
+            brightTimer?.invalidate()
+            brightTimer = nil
+            tunnelDimmed = dimmed
+        }
+        applyDayNight()
+    }
     @Published var brightDesc = ""
     /// 夜间配色：0 自动（按当地日出日落切换），1 一直白天，2 一直夜间（iOS v0.3 起；原来只有开 / 关）
     @Published var nightMode: Int { didSet { ud.set(nightMode, forKey: "night_mode"); applyDayNight(force: true) } }
@@ -128,6 +174,11 @@ final class Settings: ObservableObject {
             MusicBridge.shared.syncLyrics(force: true)
             MusicBridge.shared.refresh(force: true)
         }
+    }
+    /// 后台省电：锁屏且链路空闲（无导航/巡航/录制/音乐显示/传图）满 3 分钟断开圆屏，回前台自动重连；
+    /// 期间后台心跳也已放慢。默认开；关闭则只放慢心跳不断开。
+    @Published var idleLinkSave: Bool = UserDefaults.standard.object(forKey: "ble_idle_save") as? Bool ?? true {
+        didSet { ud.set(idleLinkSave, forKey: "ble_idle_save") }
     }
     @Published var progressRing = UserDefaults.standard.object(forKey: "trip_prog") as? Bool ?? true {
         didSet { ud.set(progressRing,forKey:"trip_prog"); BleLink.shared.send(progressRing ? "#M1" : "#M0") }
@@ -160,13 +211,14 @@ final class Settings: ObservableObject {
 
     private init() {
         amapKey = ud.string(forKey: "key_amap") ?? ""
-        theme = [1, 0, 5, 11].contains(ud.integer(forKey: "map_theme")) && ud.object(forKey: "map_theme") != nil ? ud.integer(forKey: "map_theme") : 1
+        theme = Self.themeOrder.contains(ud.integer(forKey: "map_theme")) && ud.object(forKey: "map_theme") != nil ? ud.integer(forKey: "map_theme") : 1
         rotationDeg = ud.object(forKey: "screen_rot_deg") as? Int
             ?? ((ud.object(forKey: "screen_rot") as? Int ?? 0) & 3) * 90   // 老版本只存了 0~3 档
         brightness = ud.object(forKey: "bright") as? Double ?? 200
         brightAuto = ud.object(forKey: "bright_auto") as? Bool ?? true
         brightDay = ud.object(forKey: "bright_day") as? Double ?? 255
         brightNight = ud.object(forKey: "bright_night") as? Double ?? 70
+        tunnelAuto = ud.object(forKey: "tunnel_auto") as? Bool ?? true
         if let m = ud.object(forKey: "night_mode") as? Int { nightMode = m }
         else { nightMode = ud.bool(forKey: "night") ? 2 : 0 }       // 老版本的“夜间配色”开关：开 = 一直夜间
         avoidHighway = ud.object(forKey: "avoid_hw") as? Bool ?? true
@@ -181,10 +233,40 @@ final class Settings: ObservableObject {
 
     private var brightTimer: Timer?
     private var brightSent = -1
+    private var fadeTimer: Timer?
+    private var fadeTarget: Int?
     private var isDayNow = true                         // 最近一次按日出日落算出来的
 
     /// 现在该用的亮度
-    var brightnessInUse: Int { brightAuto ? Int(isDayNow ? brightDay : brightNight) : Int(brightness) }
+    var brightnessInUse: Int {
+        let normal = brightAuto ? Int(isDayNow ? brightDay : brightNight) : Int(brightness)
+        return TunnelDimmingPolicy.targetBrightness(normal: normal, night: Int(brightNight), dimmed: tunnelDimmed)
+    }
+
+    private func applyBrightness(_ target: Int, force: Bool) {
+        if !force && fadeTarget == target { return }
+        fadeTimer?.invalidate()
+        fadeTimer = nil
+        fadeTarget = nil
+        if force || brightSent < 0 {
+            brightSent = target
+            BleLink.shared.send("#b,\(target)")
+        } else if brightSent != target {
+            fadeTarget = target
+            let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] timer in
+                guard let self, timer.isValid, self.fadeTarget == target else { return }
+                self.brightSent = TunnelDimmingPolicy.nextBrightness(current: self.brightSent, target: target)
+                BleLink.shared.send("#b,\(self.brightSent)")
+                if self.brightSent == target {
+                    timer.invalidate()
+                    self.fadeTimer = nil
+                    self.fadeTarget = nil
+                }
+            }
+            fadeTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
+    }
 
     private func sendBrightness() {
         brightTimer?.invalidate()                       // 拖滑块时别每一下都发
@@ -194,13 +276,17 @@ final class Settings: ObservableObject {
     }
 
     /// 连上圆屏时把所有设置发一遍
+    func syncBuildingContinuity() {
+        BleLink.shared.send(AmapCapturePolicy.supportsBuildings(theme) && buildings && mapOn && mapSource==MapFeeder.SRC_AMAP ? "#BC,1":"#BC,0")
+    }
     func pushAll() {
         let b = BleLink.shared
         syncBootBrand()
         MusicBridge.shared.syncMode()
         MusicBridge.shared.refresh(force: true)
         applyDayNight(force: true)                      // 亮度、夜间配色
-        b.send("#t,\(theme)")
+        b.send(MapStyleTransfer.command(theme))
+        syncBuildingContinuity()
         b.send(rotationMsg)
         b.send(curve ? "#Q,1" : "#Q,0")
         b.send(mapOn ? "#m,1" : "#m,0")
@@ -208,6 +294,137 @@ final class Settings: ObservableObject {
         b.send(progressRing ? "#M1" : "#M0")
         b.send("#L\(leadMs)")
         b.send(clean ? "#w,1" : "#w,0")
+    }
+
+    // Device-owned preferences are read before editing and are never replayed from the phone.
+    @Published private(set) var deviceControlsSupported = false
+    @Published private(set) var deviceAudioSupported = false
+    @Published private(set) var deviceIMUSupported = false
+    private var deviceDisplayReady = false
+    private var deviceTunnel = DeviceTunnelSync()
+    private var deviceSession = 0
+    private var pendingPower: (Int, Int)?
+    private var pendingSound: (Bool, Int)?
+    @Published private(set) var deviceControlStatus = "连接支持此功能的圆屏后读取"
+    @Published private(set) var devicePowerStatus = "等待读取圆屏设置"
+    @Published private(set) var deviceAudioStatus = "等待读取圆屏设置"
+    @Published private(set) var deviceCalibrationStatus = "等待读取圆屏校准"
+    @Published private(set) var devicePowerRead = false
+    @Published private(set) var deviceAudioRead = false
+    @Published private(set) var deviceCalibrationRead = false
+    @Published private(set) var deviceCalibrating = false
+    @Published private(set) var usbSleep = 600
+    @Published private(set) var batterySleep = 120
+    @Published private(set) var bootSound = true
+    @Published private(set) var bootVolume = 20
+    @Published private(set) var mountReference = 1
+    @Published private(set) var mountAngle = 0
+    static let usbSleepOptions = [60, 120, 300, 600, 1800, 0]
+    static let batterySleepOptions = [30, 60, 120, 180, 240]
+
+    func deviceDisconnected() {
+        deviceSession += 1
+        deviceDisplayReady = false
+        deviceControlsSupported = false; deviceAudioSupported = false; deviceIMUSupported = false
+        devicePowerRead = false; deviceAudioRead = false; deviceCalibrationRead = false; deviceCalibrating = false
+        deviceTunnel = DeviceTunnelSync()
+        pendingPower = nil; pendingSound = nil
+        fadeTimer?.invalidate(); fadeTimer = nil; fadeTarget = nil
+        deviceControlStatus = "连接支持此功能的圆屏后读取"
+        devicePowerStatus = "等待读取圆屏设置"; deviceAudioStatus = "等待读取圆屏设置"
+        deviceCalibrationStatus = "等待读取圆屏校准"
+    }
+
+    func deviceAuthenticated() {
+        let session = deviceSession
+        // shortcut: old firmware has no capability terminator; allow its legacy fade after discovery grace.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.deviceSession == session, BleLink.shared.isReady, BleLink.shared.verified,
+                  !self.deviceControlsSupported else { return }
+            self.deviceDisplayReady = true
+            self.applyDayNight(force: true)
+        }
+    }
+
+    @discardableResult func deviceReply(_ message: String) -> Bool {
+        let p = message.split(separator: ",").map(String.init)
+        if message == "CAP,CTL,1" {
+            guard !deviceControlsSupported else { return true }
+            deviceControlsSupported = true; deviceDisplayReady = false
+            BleLink.shared.discardLegacyDisplayCommands()
+            fadeTimer?.invalidate(); fadeTimer = nil; fadeTarget = nil
+            deviceControlStatus = "正在读取实体按键状态…"
+            BleLink.shared.sendOnce("#CTL"); BleLink.shared.sendOnce("#PS"); return true
+        }
+        if message == "CAP,AUD,1" {
+            if !deviceAudioSupported { deviceAudioSupported = true; BleLink.shared.sendOnce("#BS") }
+            return true
+        }
+        if message == "CAP,IMU,1" {
+            if !deviceIMUSupported { deviceIMUSupported = true; BleLink.shared.sendOnce("#GQ") }
+            return true
+        }
+        if p.first == "CTL", deviceControlsSupported, p.count == 6,
+           p[1].count == 4, UInt16(p[1], radix: 16) != nil,
+           p[2...5].allSatisfy({ $0 == "0" || $0 == "1" }) {
+            let adopted = deviceTunnel.receive(p)
+            guard deviceTunnel.revision == UInt16(p[1], radix: 16) else { return true }
+            deviceDisplayReady = true
+            deviceControlStatus = "隧道\(p[2] == "1" ? "开启" : "关闭") · 触摸\(p[3] == "1" ? "已锁定" : "未锁定") · 屏幕\(p[4] == "1" ? "休眠" : "唤醒")"
+            if let adopted { setTunnelMode(adopted) } else { applyDayNight() }
+            return true
+        }
+        if p.first == "PS", deviceControlsSupported, p.count == 3, let usb = Int(p[1]), let battery = Int(p[2]),
+           Self.usbSleepOptions.contains(usb), Self.batterySleepOptions.contains(battery) {
+            usbSleep = usb; batterySleep = battery; devicePowerRead = true
+            devicePowerStatus = pendingPower.map { $0 == (usb, battery) ? "圆屏已确认保存" : "保存未确认，圆屏仍使用原设置，请重试" } ?? "已读取圆屏设置"
+            pendingPower = nil; return true
+        }
+        if p.first == "BS", deviceAudioSupported, p.count == 3, ["0", "1"].contains(p[1]), let volume = Int(p[2]), (0...100).contains(volume) {
+            bootSound = p[1] == "1"; bootVolume = volume; deviceAudioRead = true
+            deviceAudioStatus = pendingSound.map { $0 == (bootSound, volume) ? "圆屏已确认保存，下次开机生效" : "保存未确认，圆屏仍使用原设置，请重试" } ?? "已读取圆屏设置"
+            pendingSound = nil; return true
+        }
+        if message == "BS,ERR", deviceAudioSupported {
+            pendingSound = nil; deviceAudioStatus = "圆屏拒绝保存，请重新读取后重试"; return true
+        }
+        if p.first == "GC", deviceIMUSupported, p.count == 4, let state = Int(p[1]), (0...5).contains(state),
+           let reference = Int(p[2]), (0...2).contains(reference), let angle = Int(p[3]), (0...359).contains(angle) {
+            GRecorder.shared.sensorState(state)
+            deviceCalibrating = state == 3
+            deviceCalibrationStatus = ["尚未校准", "等待静止并恢复估计", "校准已确认并保存", "校准中，请保持静止 3 秒…", "校准失败：请静止或更换参考方向，导航结束后重试", "传感器暂不可用"][state]
+            deviceCalibrationRead = true
+            if state == 1 || state == 2 { mountReference = reference; mountAngle = angle }
+            if state == 3 {
+                let session = deviceSession
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    guard let self, self.deviceSession == session, self.deviceCalibrating, BleLink.shared.isReady else { return }
+                    BleLink.shared.sendOnce("#GQ")
+                }
+            }
+            return true
+        }
+        return false
+    }
+
+    func setDevicePower(usb: Int, battery: Int) {
+        guard devicePowerRead, BleLink.shared.isReady, BleLink.shared.verified,
+              Self.usbSleepOptions.contains(usb), Self.batterySleepOptions.contains(battery) else { return }
+        pendingPower = (usb, battery)
+        devicePowerStatus = "等待圆屏确认…"
+        BleLink.shared.sendOnce("#PS,\(usb),\(battery)")
+    }
+    func setDeviceSound(enabled: Bool, volume: Int) {
+        guard deviceAudioRead, BleLink.shared.isReady, BleLink.shared.verified, (0...100).contains(volume) else { return }
+        pendingSound = (enabled, volume)
+        deviceAudioStatus = "等待圆屏确认…"
+        BleLink.shared.sendOnce("#BS,\(enabled ? 1 : 0),\(volume)")
+    }
+    func calibrateDevice(reference: Int, angle: Int) {
+        guard deviceCalibrationRead, !deviceCalibrating, BleLink.shared.isReady, BleLink.shared.verified,
+              (0...2).contains(reference), (0...359).contains(angle) else { return }
+        deviceCalibrationStatus = "已请求校准，等待圆屏确认…"
+        BleLink.shared.sendOnce("#GC,\(reference),\(angle)")
     }
 
     // MARK: - 昼夜自动切换（和安卓版 Brightness.kt 一样：每分钟按当地日出日落检查一次）
@@ -228,7 +445,7 @@ final class Settings: ObservableObject {
         let loc = NaviBridge.shared.lastLocation ?? LocationService.shared.location
         let r = SunTimes.isDaytime(lat: loc?.coordinate.latitude, lng: loc?.coordinate.longitude)
         isDayNow = r.day
-        let on: Bool
+        var on: Bool
         switch nightMode {
         case 1: on = false; nightDesc = "一直用白天配色"
         case 2: on = true; nightDesc = "一直用夜间配色"
@@ -236,18 +453,25 @@ final class Settings: ObservableObject {
             on = !r.day
             nightDesc = r.desc + (on ? "（现在是夜间配色）" : "（现在是白天配色）")
         }
+        if tunnelDimmed { on = true; nightDesc = "隧道模式 · 临时使用夜间配色" }
         if paletteNight != on { paletteNight = on }
         let v = on ? 1 : 0
-        if v != nightSent || force {
+        if deviceDisplayReady && !deviceControlsSupported && (v != nightSent || force) {
             nightSent = v
             BleLink.shared.send("#n,\(v)")
         }
         let lv = brightnessInUse
         brightDesc = brightAuto ? "\(r.desc)，现在用\(r.day ? "白天" : "夜间")亮度 \(lv)" : ""
-        if lv != brightSent || force {
-            brightSent = lv
-            BleLink.shared.send("#b,\(lv)")
-        }
+        if tunnelDimmed { brightDesc = "隧道模式 · 临时亮度 \(lv)" }
+        guard deviceDisplayReady else { return }
+        if deviceControlsSupported {
+            fadeTimer?.invalidate(); fadeTimer = nil; fadeTarget = nil
+            let normal = brightAuto ? Int(isDayNow ? brightDay : brightNight) : Int(brightness)
+            let baseNight = nightMode == 2 || (nightMode == 0 && !isDayNow)
+            if let message = deviceTunnel.command(normal: normal, dim: Int(brightNight), night: baseNight, tunnel: tunnelDimmed) {
+                BleLink.shared.sendOnce(message)
+            }
+        } else { applyBrightness(lv, force: force) }
     }
 }
 

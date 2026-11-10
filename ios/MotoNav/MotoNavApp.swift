@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
 @main
 struct MotoNavApp: App {
+    @AppStorage("ui_appearance") private var appearance=0
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
@@ -34,6 +35,7 @@ struct MotoNavApp: App {
 
         // 圆屏发来的通知
         BleLink.shared.onNotify = { msg in
+            if Settings.shared.deviceReply(msg) { return }
             let p = msg.split(separator: ",").map(String.init)
             if p.first == "BOOT", p.count >= 2, let id = Int(p[1]) { Settings.shared.bootReply(id); return }
             if p.count >= 3, p[0] == "T", p[1] == "M" { MusicBridge.shared.handle(p[2]); return }
@@ -48,14 +50,24 @@ struct MotoNavApp: App {
         BleLink.shared.connect()
         LocationService.shared.start()
         Settings.shared.startDayNight()                 // 夜间配色、亮度按日出日落自动切换（每分钟检查）
-        NaviBridge.shared.attach()
+        // 驾车 / 骑行引擎不再在启动时无条件创建：由 NavigationCoordinator 按需认领（算路、巡航时）
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .background(AmapCaptureSurface().frame(width: 1, height: 1))
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(AppearanceMode(rawValue:appearance)?.scheme)
+                .onReceive(NotificationCenter.default.publisher(for:UIApplication.didEnterBackgroundNotification)) { _ in GRecorder.shared.background() }
+                .onReceive(NotificationCenter.default.publisher(for:UIApplication.willResignActiveNotification)){_ in
+                    MapFeeder.shared.setRenderingAvailable(false)
+                }
+                .onReceive(NotificationCenter.default.publisher(for:UIApplication.didBecomeActiveNotification)){_ in
+                    MapFeeder.shared.setRenderingAvailable(true)
+                    GRecorder.shared.foreground()
+                    BleLink.shared.syncPhoneClock(force:true)
+                    MusicBridge.shared.pollMetadata(force:true)
+                }
         }
     }
 }

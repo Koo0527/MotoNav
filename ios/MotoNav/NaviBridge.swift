@@ -1,6 +1,7 @@
 import Foundation
 import ObjectiveC
 import CoreLocation
+import UIKit
 
 /// 版本：跟随 App 版本（见 Config.swift）
 ///
@@ -40,13 +41,15 @@ final class NaviBridge: NSObject, ObservableObject {
     @Published var uiRemainM = 0                    // iOS v0.6 剩余里程（米）、剩余时间（秒），首页显示
     @Published var uiRemainS = 0
     @Published var planFailed = false               // iOS v0.6 规划失败 / 超时：界面上显示“重新规划”
-    // iOS v0.6 模拟导航：暂停 / 继续、车速 40 → 60 → 100 → 150 循环
+    // iOS v0.6 模拟导航：暂停 / 继续、机动车档位 60 → 100 → 120 循环（NavigationSpeed 统一策略）
     @Published private(set) var emulating = false
     @Published private(set) var emuPaused = false
-    @Published private(set) var emuSpeed = 60
-    private static let EMU_SPEEDS = [40, 60, 100, 120]
+    @Published private(set) var emuSpeed = NavigationSpeed.motorDefault
+    @Published var preferredSimulationSpeed = NavigationSpeed.motorDefault
     // 调试信息
     @Published var laneRaw = "（还没收到车道信息）"
+    @Published private(set) var uiLaneImage: UIImage?
+    @Published private(set) var uiCrossImage: UIImage?
     @Published var camRaw = "（还没收到电子眼信息）"
     @Published var extraInfo = ""
     @Published var showArrived = false              // 刚到达目的地（手机和圆屏显示“已到达”4 秒）
@@ -66,6 +69,7 @@ final class NaviBridge: NSObject, ObservableObject {
     @Published private(set) var vias: [Via] = []     // iOS v0.4 途经点（分享的路线自带途经点，不用这个）
     var destCoord: CLLocationCoordinate2D? { destLat.isNaN ? nil : CLLocationCoordinate2D(latitude: destLat, longitude: destLng) }
     private var destLat = Double.nan, destLng = Double.nan
+    private var planOrigin: (lat: Double, lng: Double)?
     private var planSeq = 0
     private var lastRouteDoneAt = Date.distantPast
     // iOS v0.3 巡航
@@ -128,7 +132,8 @@ final class NaviBridge: NSObject, ObservableObject {
     private var rerouting = false
     private var myLat = Double.nan, myLng = Double.nan
     var lastLocation: CLLocation? {
-        myLat.isNaN ? nil : CLLocation(latitude: myLat, longitude: myLng)
+        guard (navigating && !emulating) || cruising, myLat.isFinite, myLng.isFinite else { return nil }
+        return CLLocation(latitude: myLat, longitude: myLng)
     }
     // 红绿灯
     private var lightBase = -1                       // 最近一次算出的前方红绿灯距离（米，-1 = 没有）
@@ -160,14 +165,18 @@ final class NaviBridge: NSObject, ObservableObject {
     private var gpsWeakSent = false
     private weak var suggestRoute: AMapNaviRoute?
     private var suggestTimer: Timer?
+    private var tunnelRouteKey = ""
+    private var tunnelPath: TunnelRoute?
+    private var lastTunnelFix = Date.distantPast
 
     /// 测速提前提醒：按车速留出约 20 秒反应时间，最少 500 米，最多 1000 米
     private var cameraRange: Int { min(1000, max(500, Int(Double(speedKmhNow) / 3.6 * 20))) }
 
     /// iOS v0.7 填了（或换了）高德 key：导航模块在没有 key 时初始化过，不会自己换 key，
-    /// 销毁重建一次，用新 key 重新初始化（导航、巡航中不动，等下次）
+    /// 销毁重建一次，用新 key 重新初始化（导航、巡航中不动，等下次）。
+    /// 引擎的销毁 / 创建统一走 NavigationCoordinator（互斥单例的所有权归它管）。
     func rebuildManager() {
-        if navigating || cruising || WebMotorSession.shared.running { return }
+        if navigating || cruising || NavigationCoordinator.shared.navigationActive { return }
         if attached {
             let m = manager
             arrival.cancel(arrival.generation)
@@ -176,14 +185,27 @@ final class NaviBridge: NSObject, ObservableObject {
             m.delegate = nil
             attached = false
         }
-        let ok = AMapNaviDriveManager.destroyInstance()
-        extraInfo = ok ? "已用新的高德 key 重新初始化导航" : "导航模块没能重建，重启一次 App 新 key 就生效了"
+        if let failure = NavigationCoordinator.shared.deactivateAll() {
+            extraInfo = failure
+            return
+        }
         routeReady = false; routeOptions = []; selectedRouteID = -1
-        attach()
+        if attach() {
+            extraInfo = "已用新的高德 key 重新初始化导航"
+        } else {
+            extraInfo = NavigationCoordinator.shared.lastFailure ?? "导航模块没能重建，重启一次 App 新 key 就生效了"
+        }
     }
 
-    func attach() {
-        if attached { return }
+    /// 认领驾车引擎（NavigationCoordinator 负责先按固定顺序销毁互斥的骑行引擎）。
+    /// 返回 false = 引擎没能就绪，本次操作不得继续。
+    @discardableResult
+    func attach() -> Bool {
+        if attached { return true }
+        guard NavigationCoordinator.shared.activate(.drive) == nil else {
+            extraInfo = NavigationCoordinator.shared.lastFailure ?? "驾车引擎没能就绪，请重试"
+            return false
+        }
         WebRouteMetadata.shared.stop()
         attached = true
         let m = manager
@@ -198,12 +220,44 @@ final class NaviBridge: NSObject, ObservableObject {
         m.setMultipleRouteNaviMode(true)
         m.updateCameraInfo = true
         m.updateTrafficInfo = true
+        return true
+    }
+
+    /// NavigationCoordinator 切换引擎时的第 1+2 步：先失效旧回调（会话代次），
+    /// 再停止导航和相关任务。stopNavi 可能同步触发模拟结束回调，所以代次必须先失效。
+    func stopForEngineSwitch() {
+        planSeq += 1
+        arrival.cancel(arrival.generation)
+        invalidateArrival()
+        tick?.invalidate(); tick = nil
+        cruiseTick?.invalidate(); cruiseTick = nil
+        cruiseIdle.stop()
+        if cruising { endCruiseQuietly() }
+        navigating = false
+        emulating = false; emuPaused = false
+        manager.stopNavi()
+    }
+
+    /// 第 3+4 步：解绑地图数据代表、delegate，释放持有的引用并清空规划状态。
+    func unbindForEngineSwitch() {
+        let m = manager
+        if let r = sessionCallbacks?.asRepresentative { m.removeDataRepresentative(r) }
+        sessionCallbacks = nil
+        m.delegate = nil
+        attached = false
+        calculating = false; routeReady = false; planFailed = false
+        routeOptions = []; selectedRouteID = -1; shareMatch = ""; routeSummary = ""
+        destLat = .nan; destLng = .nan
+        planOrigin = nil; shareRoute = nil; vias = []
+        MapFeeder.shared.onNaviEnd()
+        info = "（还没开始导航）"
     }
 
     /// Relinquish planning callbacks while independent guidance reads static camera metadata.
     /// The next SDK plan calls attach() and installs a new arrival/callback generation.
     func releaseForWebMetadata() -> Bool {
-        guard !navigating, !cruising else { return false }
+        guard !navigating, !cruising, !RideBridge.shared.navigating else { return false }
+        guard NavigationCoordinator.shared.activate(.drive) == nil else { return false }
         planSeq += 1; arrival.cancel(arrival.generation)
         if let callbacks=sessionCallbacks?.asRepresentative { manager.removeDataRepresentative(callbacks) }
         sessionCallbacks=nil;manager.delegate=nil;attached=false
@@ -213,9 +267,9 @@ final class NaviBridge: NSObject, ObservableObject {
 
     // MARK: - 路线和导航
 
-    /// 现在的位置（高德坐标）：导航定位优先，其次手机定位
+    /// 现在的位置（高德坐标）：真实导航定位优先；模拟进度不作为手机当前位置。
     func myPosition() -> (lat: Double, lng: Double)? {
-        if !myLat.isNaN { return (myLat, myLng) }
+        if let l = lastLocation { return (l.coordinate.latitude, l.coordinate.longitude) }
         guard let l = LocationService.shared.location else { return nil }
         let g = MapGeo.wgsToGcj(l.coordinate.latitude, l.coordinate.longitude)
         return (g.lat, g.lng)
@@ -223,12 +277,22 @@ final class NaviBridge: NSObject, ObservableObject {
 
     /// 规划去 (lat, lng)（高德坐标）的路线。share 不为 nil 时按导入的高德分享路线走（沿路挑途经点，只要一条）；
     /// 否则一次规划最多 3 条（躲避拥堵），“不走高速”看设置。
-    func plan(toLat lat: Double, lng: Double, share: AmapShare.Route? = nil) {
-        guard !navigating,!WebMotorSession.shared.running else { return }
-        attach()
+    func plan(toLat lat: Double, lng: Double, share: AmapShare.Route? = nil,
+              origin: MotorPoint? = nil, viaPoints: [Via] = []) {
+        guard !navigating, !NavigationCoordinator.shared.navigationActive else { return }
+        guard MotorRequest.valid(lat, lng), viaPoints.count <= 3,
+              origin.map({ MotorRequest.valid($0.lat, $0.lng) }) ?? true,
+              viaPoints.allSatisfy({ MotorRequest.valid($0.lat, $0.lng) }),
+              share == nil || viaPoints.isEmpty else {
+            if !cruising { clearPlan() }
+            info = "起终点或途经点无效，请重新选择"; planFailed = true
+            return
+        }
+        guard attach() else { calculating = false; planFailed = true; return }
         destLat = lat; destLng = lng
+        planOrigin = origin.map { ($0.lat, $0.lng) }
         shareRoute = share
-        vias = []                                    // 新目的地：途经点清空
+        vias = viaPoints
         replan()
     }
 
@@ -236,6 +300,13 @@ final class NaviBridge: NSObject, ObservableObject {
     func addVia(name: String, lat: Double, lng: Double) {
         if vias.count >= 3 || shareRoute != nil { return }
         vias.append(Via(name: name, lat: lat, lng: lng))
+        replan()
+    }
+
+    func replaceVias(_ points:[MotorPoint]) {
+        guard !navigating,!cruising,shareRoute == nil,points.count<=3,
+              points.allSatisfy({MotorRequest.valid($0.lat,$0.lng)}) else{return}
+        vias=points.map{Via(name:$0.name,lat:$0.lat,lng:$0.lng)}
         replan()
     }
 
@@ -255,6 +326,7 @@ final class NaviBridge: NSObject, ObservableObject {
         MapFeeder.shared.onNaviEnd()
         planSeq += 1
         destLat = .nan; destLng = .nan
+        planOrigin = nil
         shareRoute = nil; vias = []
         calculating = false; routeReady = false; planFailed = false
         routeOptions = []; selectedRouteID = -1; shareMatch = ""; routeSummary = ""
@@ -263,7 +335,7 @@ final class NaviBridge: NSObject, ObservableObject {
 
     /// 按上次的目的地重新规划（比如切换了“不走高速”）
     func replan(retry: Int = 1) {
-        guard !destLat.isNaN, !navigating, !WebMotorSession.shared.running else { return }
+        guard !destLat.isNaN, !navigating, !NavigationCoordinator.shared.navigationActive else { return }
         planFailed = false
         MapFeeder.shared.onNaviEnd()
         if cruising { stopCruise() }
@@ -279,7 +351,7 @@ final class NaviBridge: NSObject, ObservableObject {
         routeReady = false
         routeOptions = []; selectedRouteID = -1; shareMatch = ""
         let avoid = Settings.shared.avoidHighway
-        let me = myPosition()
+        let me = planOrigin ?? myPosition()
         var wps: [AMapNaviPoint] = []
         let strategy: AMapNaviDrivingStrategy
         if let sr = shareRoute {
@@ -357,8 +429,8 @@ final class NaviBridge: NSObject, ObservableObject {
     }
 
     func start(emulate: Bool) {
-        guard routeReady, !navigating, !WebMotorSession.shared.running else { return }
-        attach()
+        guard routeReady, !navigating, !NavigationCoordinator.shared.navigationActive else { return }
+        guard attach() else { info = "导航没能开始：\(extraInfo)"; return }
         if cruising { endCruiseQuietly() }
         // Stop a previous arrival hold before attaching a new trip's callbacks.
         arrival.cancel(arrival.generation)
@@ -375,7 +447,7 @@ final class NaviBridge: NSObject, ObservableObject {
         ShareGuide.shared.start(shareRoute, avoidHighway: Settings.shared.avoidHighway, emulate: emulate,
                                 myLat: me?.lat ?? .nan, myLng: me?.lng ?? .nan)          // 偏航跟随原路线 + 圆屏原路线细线
         emulating = emulate; emuPaused = false
-        if emulate { emuSpeed = 60; manager.setEmulatorNaviSpeed(Int32(emuSpeed)) }
+        if emulate { emuSpeed = NavigationSpeed.normalized(preferredSimulationSpeed, bicycle: false); manager.setEmulatorNaviSpeed(Int32(emuSpeed)) }
         let ok = emulate ? manager.startEmulatorNavi() : manager.startGPSNavi()
         if ok && arrival.acceptsGuidance(token) {
             if !emulate { RideRecorder.shared.start("导航"); LocationService.shared.setPrecise(true) }
@@ -397,18 +469,19 @@ final class NaviBridge: NSObject, ObservableObject {
         if emuPaused { manager.pauseNavi(); speedMps = 0 } else { manager.resumeNavi() }   // 暂停时不再按车速往前推算距离
     }
 
-    /// 模拟导航车速：40 → 60 → 100 → 150 km/h 循环
+    /// 模拟导航车速：机动车档位 60 → 100 → 120 km/h 循环（驾车引擎始终机动车档）
     func cycleEmuSpeed() {
         guard navigating, emulating else { return }
-        let all = NaviBridge.EMU_SPEEDS
-        emuSpeed = all[((all.firstIndex(of: emuSpeed) ?? 0) + 1) % all.count]
+        emuSpeed = NavigationSpeed.next(emuSpeed, bicycle: false)
         manager.setEmulatorNaviSpeed(Int32(emuSpeed))
     }
 
     func stop() {
         // stopNavi may emit emulator-end immediately. Close the gate first.
         arrival.cancel(arrival.generation)
-        manager.stopNavi()
+        // 独立导航接管时会调用这里：引擎可能已切到骑行（或尚未创建），
+        // 只有驾车引擎是当前所有者时才允许触碰，绝不为停止而重建旧单例
+        NavigationCoordinator.shared.driveManagerIfActive()?.stopNavi()
         finish("C", "已退出导航")
     }
 
@@ -418,10 +491,13 @@ final class NaviBridge: NSObject, ObservableObject {
         if arrived {
             guard let event = event, arrival.complete(token, event: event) else { return }
         } else { arrival.cancel(token) }
+        myLat = .nan; myLng = .nan
+        emulating = false; emuPaused = false
         RideRecorder.shared.finish()
         LocationService.shared.setPrecise(false)
         MapFeeder.shared.onNaviEnd()
         ShareGuide.shared.stop()
+        Settings.shared.resetTunnel()
         tick?.invalidate(); tick = nil
         arriveSeq += 1
         showArrived = arrived                       // 先设这个再设 navigating：导航画面据此决定马上关还是等 4 秒
@@ -440,7 +516,8 @@ final class NaviBridge: NSObject, ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
                 guard let self = self, seq == self.arriveSeq, self.arrival.canClearArrival(token),
                       !self.navigating, !self.cruising else { return }
-                self.manager.stopNavi()
+                // 引擎可能已被切换销毁：不能为了收尾而重建旧单例
+                NavigationCoordinator.shared.driveManagerIfActive()?.stopNavi()
                 self.resetState()
                 self.showArrived = false
                 self.lastSent = "C"
@@ -450,6 +527,9 @@ final class NaviBridge: NSObject, ObservableObject {
     }
 
     private func resetState() {
+        myLat = .nan; myLng = .nan
+        tunnelRouteKey = ""; tunnelPath = nil; lastTunnelFix = .distantPast
+        Settings.shared.resetTunnel()
         tripMeters = 0; tripMaxKmh = 0; tripStarted = Date(); tripPosition = nil
         curDir = ""; curAngle = nil; angleKey = ""; lastRouteKey = ""
         baseDist = 0; speedMps = 0
@@ -459,6 +539,7 @@ final class NaviBridge: NSObject, ObservableObject {
         lastCamMsg = ""; lastCamAt = .distantPast; camLimit = 0; camMinDist = Int.max; lastCamMapMsg = ""
         camPts = []; cruiseCamPts = []; facPts = [:]; navFacPts = []; routeFacKey = ""; uiRemainM = 0; uiRemainS = 0
         lastLaneMsg = ""; lastTrafficMsg = ""; lastTrafficAt = .distantPast; gpsWeakSent = false
+        uiLaneImage = nil; uiCrossImage = nil
         suggestRoute = nil; uiSuggestMin = 0; suggestTimer?.invalidate()
         uiDir = ""; uiDist = -1; uiRoad = ""; extraInfo = ""
     }
@@ -748,7 +829,10 @@ final class NaviBridge: NSObject, ObservableObject {
         }
         let m = n > 0 ? "#j,\(sb)" : "#j"
         laneRaw = "车道 \(n) 条：背景 \(back)，推荐 \(select)（编码 \(sb)）"
-        if m != lastLaneMsg { lastLaneMsg = m; BleLink.shared.send(m) }
+        uiLaneImage = n > 0 ? CreateLaneInfoImageWithLaneInfo(back, select) : nil
+        if m != lastLaneMsg {
+            lastLaneMsg = m; BleLink.shared.send(m)
+        }
     }
 
     // MARK: - 路况、重新规划、GPS、更快路线
@@ -815,11 +899,30 @@ final class NaviBridge: NSObject, ObservableObject {
 
     // MARK: - 巡航模式（iOS v0.3，和安卓 v4.7 一样）
 
+    /// 官方骑行规划被巡航抢占时的短暂提示（4 秒后自动消失；不阻断接管）
+    @Published var ridePlanNotice = ""
+
+    /// 引擎抢占提示（产品裁定：不阻断接管）：官方骑行“已规划未导航”的路线被本次巡航取代。
+    /// 与独立导航 WebMotorSession.start 里的提示完全同机制（同一文案来源、4 秒自动消失、不阻断接管）。
+    /// 必须在 attach() 之前调用：attach 会销毁骑行引擎并清空 RideBridge 的规划状态。
+    func surfaceRidePlanTakeoverNotice() {
+        if let notice = IndependentTakeoverPolicy.ridePlanNotice(officialRidePlanned: RideBridge.shared.routeReady,
+                                                                 rideNavigating: RideBridge.shared.navigating,
+                                                                 takenOverBy: "巡航") {
+            ridePlanNotice = notice
+            DispatchQueue.main.asyncAfter(deadline:.now()+4) { [weak self] in
+                guard let self = self, self.ridePlanNotice == notice else { return }
+                self.ridePlanNotice = ""
+            }
+        }
+    }
+
     /// 开始巡航（不设目的地）：返回 nil = 成功，否则是出错原因
     func startCruise() -> String? {
-        if navigating || WebMotorSession.shared.running { return "导航中不能开巡航，先退出导航" }
+        if navigating || NavigationCoordinator.shared.navigationActive { return "导航中不能开巡航，先退出导航" }
         if cruising { return nil }
-        attach()
+        surfaceRidePlanTakeoverNotice()      // 引擎抢占提示：官方骑行“已规划未导航”被巡航取代（不阻断）
+        guard attach() else { return NavigationCoordinator.shared.lastFailure ?? "巡航没能开始，请重试" }
         arrival.cancel(arrival.generation)
         manager.stopNavi()
         invalidateArrival()
@@ -1091,6 +1194,7 @@ extension NaviBridge {
     @objc(driveManager:updateNaviLocation:)
     func mnLocation(_ m: AMapNaviDriveManager, location l: AMapNaviLocation?) {
         guard arrival.acceptsGuidance(arrival.generation), let l = l, !cruising else { return }     // 巡航时用手机定位（onCruiseLocation）
+        updateTunnel(l, manager: m)
         let kmh = max(0, l.speed)
         speedKmhNow = kmh
         speedMps = emuPaused ? 0 : Double(kmh) / 3.6
@@ -1104,6 +1208,56 @@ extension NaviBridge {
         }
         let msg = "#v,\(kmh)"
         if msg != lastSpeedMsg { lastSpeedMsg = msg; BleLink.shared.send(msg) }
+    }
+
+    private func updateTunnel(_ location: AMapNaviLocation, manager: AMapNaviDriveManager) {
+        let settings = Settings.shared
+        guard location.isMatchNaviPath, location.accuracy.isFinite,
+              location.accuracy >= 0, location.accuracy <= 50,
+              let date = location.timestamp, abs(date.timeIntervalSinceNow) <= 5,
+              let coordinate = location.coordinate,
+              MotorRequest.valid(Double(coordinate.latitude), Double(coordinate.longitude)),
+              let route = manager.naviRoute else {
+            settings.updateTunnel(.unknown)
+            return
+        }
+        // Repeated SDK fixes must not count as fresh entry/exit confirmations.
+        guard date > lastTunnelFix else { return }
+        lastTunnelFix = date
+        let segments = route.routeSegments ?? []
+        let segmentIndex = Int(location.currentSegmentIndex), linkIndex = Int(location.currentLinkIndex)
+        guard segments.indices.contains(segmentIndex) else { settings.updateTunnel(.unknown); return }
+        let links = segments[segmentIndex].links ?? []
+        guard links.indices.contains(linkIndex) else { settings.updateTunnel(.unknown); return }
+        let key = "\(manager.naviRouteID):\(route.routeUID):\(route.routeLength)"
+        if key != tunnelRouteKey {
+            tunnelRouteKey = key
+            tunnelPath = TunnelRoute(segments: segments.map { segment in
+                (segment.links ?? []).map { TunnelRoute.Link(metres: Double($0.length), isTunnel: (0...4).contains($0.linkType.rawValue) ? $0.linkType == .underPass : nil) }
+            })
+            settings.updateTunnel(.unknown)
+        }
+        let link = links[linkIndex]
+        let coordinates = link.coordinates ?? []
+        let pointIndex = Int(location.currentPointIndex)
+        var remaining: Double?
+        if coordinates.indices.contains(pointIndex), coordinates[pointIndex...].allSatisfy({
+            MotorRequest.valid(Double($0.latitude), Double($0.longitude))
+        }) {
+            let nextIndex = min(pointIndex + 1, coordinates.count - 1)
+            let next = coordinates[nextIndex]
+            var distance = Self.distM(Double(coordinate.latitude), Double(coordinate.longitude), Double(next.latitude), Double(next.longitude))
+            for i in nextIndex..<(coordinates.count - 1) {
+                let a = coordinates[i], b = coordinates[i + 1]
+                distance += Self.distM(Double(a.latitude), Double(a.longitude), Double(b.latitude), Double(b.longitude))
+            }
+            // Geometry and the SDK's integer link length have different rounding.
+            if distance.isFinite, distance <= Double(link.length) + max(5, location.accuracy) {
+                remaining = min(Double(link.length), distance)
+            }
+        }
+        let evidence = tunnelPath?.evidence(segment: segmentIndex, link: linkIndex, metresToEndOfLink: remaining) ?? .unknown
+        settings.updateTunnel(evidence)
     }
 
     // 电子眼：测速牌取按车速提前范围内最近的一个有限速的；前方 1 公里内的都画在小地图上
@@ -1150,7 +1304,19 @@ extension NaviBridge {
 
     @objc(driveManagerHideLaneInfo:)
     func mnLaneHide(_ m: AMapNaviDriveManager) {
+        uiLaneImage = nil
         if lastLaneMsg != "#j" { lastLaneMsg = "#j"; BleLink.shared.send("#j") }
+    }
+
+    @objc(driveManager:showCrossImage:)
+    func mnCrossShow(_ m: AMapNaviDriveManager, image: UIImage?) {
+        // Native UI can consume this image and emit nil; only an explicit hide clears it.
+        if let image = image { uiCrossImage = image }
+    }
+
+    @objc(driveManagerHideCrossImage:)
+    func mnCrossHide(_ m: AMapNaviDriveManager) {
+        uiCrossImage = nil
     }
 
     // 巡航：道路设施（可能也带摄像头）、前方电子眼、巡航信息

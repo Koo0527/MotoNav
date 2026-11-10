@@ -186,7 +186,7 @@ class MotorWebNavActivity : AppCompatActivity() {
         root.addView(settingsButton,FrameLayout.LayoutParams(dp(46),dp(46),Gravity.TOP or Gravity.END).apply{
             rightMargin=dp(12);topMargin=dp(204)
         })
-        if(packageName=="com.autonavi.amapauto") {
+        if(packageName=="com.motonav.app.fresh") {
             providerButton=circle("车机",S.CYAN).apply{
                 contentDescription="查看车机路口信息，导航继续"
                 setOnClickListener{NavigationUi.openProvider(this@MotorWebNavActivity)}
@@ -345,15 +345,14 @@ class MotorWebNavActivity : AppCompatActivity() {
             if(!g.lat.isNaN()){
                 val pose=LatLng(g.lat,g.lng)
                 val positionChanged=poseUpdates.positionChanged(g.lat,g.lng)
-                val headingChanged=poseUpdates.headingChanged(g.bearing)
-                val targetBearing = if(follow) 0f else g.bearing
+                val targetBearing = if(follow) 0f else 360f-g.bearing
                 if(marker==null){
                     marker=map.map.addMarker(MarkerOptions().position(pose).anchor(.5f,.5f)
                         .icon(BitmapDescriptorFactory.fromBitmap(carBitmap()))
                         .apply{setFlat(false)}.rotateAngle(targetBearing).zIndex(5f).title("当前位置"))
                 } else {
                     if(positionChanged) marker?.position=pose
-                    if(headingChanged) marker?.rotateAngle=targetBearing
+                    if(marker?.rotateAngle != targetBearing) marker?.rotateAngle=targetBearing
                 }
                 if(follow && poseUpdates.cameraChanged(g.lat,g.lng,g.bearing)){
                     map.map.animateCamera(CameraUpdateFactory.newCameraPosition(CameraPosition(pose,17f,0f,g.bearing)), 500L, null)

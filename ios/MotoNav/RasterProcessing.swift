@@ -36,6 +36,21 @@ enum RasterPacket {
         guard b.count >= 16 else { return false }
         return valid(data, frame: u16(b, 0), x: i32(b, 2), y: i32(b, 6))
     }
+    /// Check RLE runs without expanding a 1.44M-pixel frame on the main thread.
+    static func hasMapContent(_ data:Data)->Bool {
+        guard valid(data) else{return false}
+        let b=[UInt8](data)
+        if u16(b,14)&0x8000 != 0{return true}
+        var p=16,materials=0
+        let minimum=MapGeo.minMaterialPixels(w:size,h:size)
+        while p<b.count {
+            let v=b[p];p+=1
+            var count=Int(v>>4)+1
+            if v>>4==15 {count+=Int(b[p]);p+=1}
+            if v&15 != 0 {materials+=count;if materials>=minimum{return true}}
+        }
+        return false
+    }
     static func forLegacy(_ data: Data) -> Data {
         guard isBuilding(data), valid(data) else { return data }
         var b = [UInt8](data); b[14] = UInt8(2000 & 255); b[15] = UInt8(2000 >> 8)
@@ -61,7 +76,29 @@ enum RasterPacket {
     }
 }
 
+enum MapStyleTransfer {
+    static func command(_ style:Int)->String {"#t,\(style),1"}
+    static func matches(_ packet:Data,style:Int)->Bool {
+        guard RasterPacket.valid(packet) else {return false}
+        let bytes=[UInt8](packet),flags=RasterPacket.u16(bytes,14)
+        if style==0 {return flags&0x8000 != 0}
+        if style != 5 {return (1...9).contains(style) && flags&0x8000 == 0}
+        if style==5 {
+            guard flags==2000 else {return false}
+            var p=16
+            while p<bytes.count {
+                let v=bytes[p];p+=1
+                if v&15>1 {return false}
+                if v>>4==15 {p+=1}
+            }
+        }
+        return true
+    }
+}
+
+
 enum AmapCapturePolicy {
+    static func supportsBuildings(_ style: Int) -> Bool { (1...3).contains(style) }
     // SDK zoom is based on logical view bounds, not on Retina screenshot pixel count.
     // Keep the 3x drawable below 4096 pixels; 1200 points still exceeds zoom 17
     // for a 1.2km building tile. Android pixel dimensions are not iOS points.
@@ -145,6 +182,7 @@ enum AmapBuildings {
         guard mask.filter({ $0 == 1 }).count <= raw.count / 2 else { throw MapProcessingError.invalid("建筑图层覆盖异常") }
         var component: [Int] = []; component.reserveCapacity(raw.count / 8)
         var buildings = 0
+        guard mask.reduce(0, { $0 + Int($1) }) <= mask.count / 2 else {throw MapProcessingError.invalid("建筑图层覆盖异常")}
         for i in mask.indices where mask[i] == 1 {
             component.removeAll(keepingCapacity: true); component.append(i); mask[i] = 2
             var head = 0, minX = i % w, maxX = minX, minY = i / w, maxY = minY
@@ -188,5 +226,136 @@ enum AmapBuildings {
         guard retained else { return incoming }
         let packet = MapGeo.encodeRaster(frameId: RasterPacket.u16(a, 0), x0: RasterPacket.i32(a, 2), y0: RasterPacket.i32(a, 6), w: n, h: n, mmPerPx: 2000 | RasterPacket.flag, idx: current)
         return RasterPacket.valid(packet) ? packet : incoming
+    }
+}
+
+
+/// Keep essential roads in front of optional roofs on a measured, slow link.
+enum MapDeliveryPolicy {
+    static func roofsFit(kmh:Int,bytes:Int,rate:Double?,coverageSeconds:Double,nextBaseBytes:Int=0)->Bool {
+        if kmh<6 {return true}
+        guard let rate=rate,rate.isFinite,rate>0,coverageSeconds.isFinite,coverageSeconds>0 else {return false}
+        // The measured rate already includes ATT waits and competing position traffic.
+        // Reserve the next road packet plus a margin before this viewport expires.
+        return Double(bytes+max(0,nextBaseBytes))/rate+1<=coverageSeconds
+    }
+    /// Unlike a colour-only legacy conversion, re-RLE the merged runs so the
+    /// missing roof layer actually reduces bytes. No 1.44M-pixel expansion.
+    static func compactBase(_ data:Data)->Data {
+        guard RasterPacket.isBuilding(data),RasterPacket.valid(data) else {return data}
+        let raw=[UInt8](data)
+        var result=Data(raw.prefix(16));result[14]=UInt8(2000&255);result[15]=UInt8(2000>>8)
+        var p=16,last=UInt8(255),run=0
+        func flush() {
+            while run>0 {
+                let count=min(271,run)
+                if count<=15 {result.append(UInt8((count-1)<<4)|last)}
+                else {result.append(0xf0|last);result.append(UInt8(count-16))}
+                run-=count
+            }
+        }
+        while p<raw.count {
+            let v=raw[p];p+=1
+            var n=Int(v>>4)+1
+            if v>>4==15 {n+=Int(raw[p]);p+=1}
+            let original=v&15,color=original>3 ? original&2:original
+            if last != color {flush();last=color}
+            run+=n
+            while run>=271 {result.append(0xf0|last);result.append(255);run-=271}
+        }
+        flush();return result
+    }
+}
+
+struct BuildingCoverage: Codable, Equatable {
+    var qualityVersion: Int = FastBuildings.qualityVersion
+    var checkedMask: UInt8 = 0
+    var isComplete: Bool { checkedMask == 15 }
+    static let legacyFull = BuildingCoverage(qualityVersion: 0, checkedMask: 15)
+}
+struct BuildingUpdate { let bytes: Data; let coverage: BuildingCoverage }
+struct BuildingView { let x: Double, y: Double, bearing: Double?, radius: Double }
+struct BuildingCheckpoint { let coverage: BuildingCoverage; let patches: [Int: Data] }
+enum FastBuildings {
+    static let qualityVersion = 2
+    static func order(cx: Double, cy: Double, view: BuildingView?) -> [Int] {
+        let v = view.flatMap { $0.x.isFinite && $0.y.isFinite && $0.radius.isFinite && $0.radius>=0 ? $0 : nil }
+        func score(_ i: Int) -> (Double, Double, Double) {
+            let x = cx + (i % 2 == 0 ? -600.0 : 600.0), y = cy + (i < 2 ? 600.0 : -600.0)
+            let dx = x - (v?.x ?? cx), dy = y - (v?.y ?? cy)
+            var overlap=0.0
+            if let v=v {
+                let width:Double=max(0,min(x+600,v.x+v.radius)-max(x-600,v.x-v.radius))
+                let height:Double=max(0,min(y+600,v.y+v.radius)-max(y-600,v.y-v.radius))
+                overlap=width*height
+            }
+            let a = (v?.bearing ?? 0) * .pi / 180
+            let forward = v?.bearing?.isFinite == true ? dx * sin(a) + dy * cos(a) : 0
+            return (-overlap, -forward, hypot(dx,dy))
+        }
+        return [0,1,2,3].sorted { let a=score($0),b=score($1); return a == b ? $0 < $1 : a < b }
+    }
+    static func simplify(_ raw: [UInt32]) throws -> Data {
+        guard raw.count == 600*600 else { throw MapProcessingError.invalid("楼块图尺寸不一致") }
+        var mask = [UInt8](repeating: 0, count: 300*300)
+        for y in 0..<300 { for x in 0..<300 {
+            let p=y*1200+x*2
+            let count=[p,p+1,p+600,p+601].reduce(0) { $0 + (AmapBuildings.marked(raw[$1]) ? 1 : 0) }
+            mask[y*300+x] = count >= 2 ? 1 : 0
+        } }
+        guard mask.reduce(0, { $0 + Int($1) }) <= mask.count / 2 else {throw MapProcessingError.invalid("建筑图层覆盖异常")}
+        for i in mask.indices where mask[i] == 1 {
+            var cells=[i],head=0;mask[i]=2
+            while head<cells.count {
+                let p=cells[head];head+=1
+                for n in [p%300>0 ? p-1 : -1,p%300<299 ? p+1 : -1,p>=300 ? p-300 : -1,p<89700 ? p+300 : -1] where n>=0 {
+                    if mask[n]==1 {mask[n]=2;cells.append(n)}
+                }
+            }
+            guard cells.count <= mask.count / 8 else {throw MapProcessingError.invalid("建筑连通区域异常")}
+            for p in cells {mask[p] = cells.count>=4 ? 3 : 0}
+        }
+        return clean(Data(mask.map { $0 == 3 ? 1 : 0 }))
+    }
+    /// Remove only a one-cell leaf on a supported flat edge. Its sole cardinal
+    /// attachment and empty outer ring preserve components and holes.
+    static func clean(_ patch: Data) -> Data {
+        guard patch.count == 300*300 else { return patch }
+        let source = [UInt8](patch)
+        guard source.allSatisfy({ $0 <= 1 }) else { return patch }
+        var out = source
+        let directions = [(-300,1),(300,1),(-1,300),(1,300)]
+        for y in 1..<299 { for x in 1..<299 {
+            let p = y*300+x
+            guard source[p] == 1 else { continue }
+            let ring = [-301,-300,-299,-1,1,299,300,301]
+            guard ring.reduce(0, { $0 + Int(source[p+$1]) }) == 3 else { continue }
+            for (toward,side) in directions {
+                if source[p+toward] == 1 && source[p+toward-side] == 1 && source[p+toward+side] == 1 {
+                    out[p] = 0
+                    break
+                }
+            }
+        } }
+        return Data(out)
+    }
+    static func packet(base: Data, patches: [Int: Data]) -> Data {
+        guard var pixels=RasterPacket.decode(base) else {return base}
+        var mask=[UInt8](repeating:0,count:600*600)
+        for (i,patch) in patches where (0..<4).contains(i) && patch.count==90000 {
+            let tile=[UInt8](patch),ox=(i%2)*300,oy=(i/2)*300
+            for y in 0..<300 {for x in 0..<300 {mask[(oy+y)*600+ox+x]=tile[y*300+x]}}
+        }
+        var roofs=false
+        for y in 0..<1200 {for x in 0..<1200 {
+            let p=y*1200+x,c=(y/2)*600+x/2
+            guard mask[c]==1,pixels[p]==0 || pixels[p]==2 else {continue}
+            let edge=x==0 || y==0 || x==1199 || y==1199 ||
+                mask[(y/2)*600+(x-1)/2] != 1 || mask[(y/2)*600+(x+1)/2] != 1 ||
+                mask[((y-1)/2)*600+x/2] != 1 || mask[((y+1)/2)*600+x/2] != 1
+            pixels[p]=(edge ? 5 : 4) | (pixels[p]&2);roofs=true
+        }}
+        let b=[UInt8](base)
+        return MapGeo.encodeRaster(frameId:RasterPacket.u16(b,0),x0:RasterPacket.i32(b,2),y0:RasterPacket.i32(b,6),w:1200,h:1200,mmPerPx:2000 | (roofs ? RasterPacket.flag : 0),idx:pixels)
     }
 }

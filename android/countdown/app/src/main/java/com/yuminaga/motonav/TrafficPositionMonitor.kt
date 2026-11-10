@@ -30,10 +30,12 @@ object TrafficPositionMonitor {
         }
     }
     fun start(c:Context){
-        if(c.packageName!="com.autonavi.amapauto" || manager!=null)return
+        if(c.packageName!="com.motonav.app.fresh" || manager!=null)return
         try{
             val m=c.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            m.requestLocationUpdates(LocationManager.GPS_PROVIDER,2000L,2f,listener,Looper.getMainLooper())
+            // Keep stopped fixes fresh for the red-light hold gate; a 2m minimum
+            // would suppress the very updates needed while waiting at a signal.
+            m.requestLocationUpdates(LocationManager.GPS_PROVIDER,2000L,0f,listener,Looper.getMainLooper())
             manager=m
         }catch(e:RuntimeException){Log.w("MotoNavLightOverlay","GPS stop observer unavailable; SDK location fallback remains",e)}
     }

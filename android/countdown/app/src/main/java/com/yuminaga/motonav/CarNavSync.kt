@@ -60,8 +60,8 @@ object CarNavSync {
         if(registered)return
         context=c.applicationContext
         val r=object:BroadcastReceiver(){override fun onReceive(c:Context,i:Intent){receive(i)}}
-        if(Build.VERSION.SDK_INT>=33)context!!.registerReceiver(r,IntentFilter(CarEngineTap.ACTION),"com.yuminaga.motonav.permission.CAR_GUIDANCE",handler,Context.RECEIVER_NOT_EXPORTED)
-        else context!!.registerReceiver(r,IntentFilter(CarEngineTap.ACTION),"com.yuminaga.motonav.permission.CAR_GUIDANCE",handler)
+        if(Build.VERSION.SDK_INT>=33)context!!.registerReceiver(r,IntentFilter(CarEngineTap.ACTION),"com.motonav.app.fresh.permission.CAR_GUIDANCE",handler,Context.RECEIVER_NOT_EXPORTED)
+        else context!!.registerReceiver(r,IntentFilter(CarEngineTap.ACTION),"com.motonav.app.fresh.permission.CAR_GUIDANCE",handler)
         registered=true
     }
     private fun send(i:Intent) {
@@ -79,7 +79,7 @@ object CarNavSync {
         Log.i("MotoNavCarSync","provider mute requested: navigation=1 cruise=1")
     }
     /** Uses the current selected SDK path, not a stale destination preference. */
-    fun wants(c:Context)=TrafficLightOverlay.enabled && c.packageName=="com.autonavi.amapauto" &&
+    fun wants(c:Context)=TrafficLightOverlay.enabled && c.packageName=="com.motonav.app.fresh" &&
         NaviBridge.directRouteMode!=LocalRouting.BICYCLE && ShareGuide.route?.isTravel!=true
     fun request(c:Context,n:AMapNavi,emulate:Boolean):Boolean {
         stop()
@@ -101,7 +101,7 @@ object CarNavSync {
     fun requestWeb(c:Context,route:WebMotorRoute,emulate:Boolean) {
         stop();start(c)
         routeSource="web-motorcycle"
-        if(!TrafficLightOverlay.enabled || c.packageName!="com.autonavi.amapauto"){status="后台路线同步已关闭";return}
+        if(!TrafficLightOverlay.enabled || c.packageName!="com.motonav.app.fresh"){status="后台路线同步已关闭";return}
         if(emulate){status="网页模拟未同步真实位置灯源";return}
         webRouteKey=route.key
         val track=route.tracker()
@@ -226,6 +226,7 @@ object CarNavSync {
     }
     private fun receive(i:Intent) {
         if(i.getStringExtra("kind")=="engine"){
+            if(i.getStringExtra("providerProcess")!=context?.packageName)return
             if(current())engineState.accept(i.getLongExtra("syncToken",0),i.getLongExtra("at",0),
                 i.getBooleanExtra("real",false),i.getBooleanExtra("simulation",false),now())
             return
@@ -308,13 +309,13 @@ object CarNavSync {
     fun allows(wanted:Int,lightMetres:Int):Boolean {
         if(!aligned())return false
         val ownTurn=if(WebMotorGuide.active)WebMotorGuide.turnMeters else NaviBridge.uiDist
-        val carLight=CarSignalAlignment.lightInCarReference(lightMetres,ownTurn,carTurnMetres)
+        val held=stoppedGuide()
         // Eligibility was established in the SDK's 300m range. Translation can
         // exceed 300m by the permitted sampling skew; only the offset is needed.
-        val carWanted=TrafficSignalPolicy.desiredMovementAtOffset(CarSignalAlignment.turn(carIcon),carTurnMetres,carLight)
         // Both engines must approach the same maneuver, at a similar distance.
-        if(wanted!=carWanted)return false
-        return wanted==4 || kotlin.math.abs(carTurnMetres-(if(WebMotorGuide.active)WebMotorGuide.turnMeters else NaviBridge.trafficLightGuidanceTurnMetres()))<=35 || stoppedGuide()
+        if(!CarSignalAlignment.movementAgreement(wanted,lightMetres,ownTurn,carTurnMetres,
+                CarSignalAlignment.turn(carIcon),held))return false
+        return wanted==4 || kotlin.math.abs(carTurnMetres-(if(WebMotorGuide.active)WebMotorGuide.turnMeters else NaviBridge.trafficLightGuidanceTurnMetres()))<=35 || held
     }
     fun summary():String=if(requested&&!startup.running()&&startup.plans()==0&&now()-requestedAt>30000&&guideAt==0L)"路口信息服务暂未就绪，可在高级诊断完成首次初始化" else status
     fun debug()=JSONObject().put("source",routeSource).put("webRouteKey",webRouteKey)

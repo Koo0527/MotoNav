@@ -1,4 +1,16 @@
 #pragma once
+#include "../../RasterBuildingCarry.h"
+#include "../../RasterSmoothing.h"
+#if MOTONAV_RASTER_SMOOTHING
+uint8_t *rasterTiles=nullptr,*rasterBackTiles=nullptr;
+bool rasterTilesValid=false;
+static void prepareRasterTiles() {
+  if(!rasterBackTiles)rasterBackTiles=(uint8_t *)ps_malloc(RASTER_BUF_BYTES/128);
+}
+#endif
+bool rasterBuildingCarryOn=false; // Explicit App opt-in; old clients keep prior behaviour.
+bool rasterCarriesBuildings=false;
+uint32_t rasterBuildingCarryEpoch=0;
 // 位图地图及罪恶都市轮廓解码。由 MotoNav.ino 按依赖顺序包含，仅编译一次。
 // v2.5 解析图片地图：u16 坐标系, i32 左上角 x, i32 左上角 y, u16 宽, u16 高, u16 每像素毫米, 然后是压缩的颜色编号
 static inline uint16_t blendF(uint16_t a, uint16_t b, uint32_t t);   // v6.1 后面定义
@@ -128,6 +140,9 @@ void prepareVicePalette(const uint16_t *pal) {
 
 void parseRasterLegacy(const uint8_t *p, uint32_t len) {
   rasterValid = false;
+#if MOTONAV_RASTER_SMOOTHING
+  rasterTilesValid=false;
+#endif
   rasterViceValid = false;
   if (len < 16) return;
   int frame = rdu16(p);
@@ -194,6 +209,38 @@ void parseRasterLegacy(const uint8_t *p, uint32_t len) {
   rasterAt = millis();
 }
 
+static inline RasterHeader currentRasterHeader() {
+  RasterHeader old = {};
+  old.frame=rasterFrame; old.x0=rasX0; old.y0=rasY0; old.width=rasW; old.height=rasH;
+  old.mm=(uint16_t)lroundf(rasMpp*1000); old.blocksWide=rasBW;
+  old.palette=rasHasPal;old.buildings=rasterCarriesBuildings;
+  old.bytes=(size_t)old.blocksWide*((old.height+15)/16)*128;
+  return old;
+}
+static inline bool canKeepRaster(const RasterHeader &old,const RasterHeader &next) {
+  return rasterValid && !rasterViceValid && !rasHasPal && !next.palette &&
+      rasterFrame==next.frame && old.mm==next.mm && rasterAllocatedBytes==RASTER_BUF_BYTES;
+}
+static inline void installDecodedRaster(const uint8_t *p,const RasterHeader &next,const RasterHeader &old,bool keep,bool tilesReady=false) {
+#if MOTONAV_RASTER_SMOOTHING
+  uint8_t *oldTiles=rasterTiles;rasterTiles=rasterBackTiles;rasterBackTiles=oldTiles;
+  rasterTilesValid=tilesReady && !next.palette;
+#else
+  (void)tilesReady;
+#endif
+  uint8_t *oldPixels=rasterBuf;
+  rasterBuf=rasterBackBuf;
+  rasterBackBuf=oldPixels;
+  if (rasterAllocatedBytes!=RASTER_BUF_BYTES) { free(rasterBackBuf); rasterBackBuf=nullptr; keep=false; }
+  rasterAllocatedBytes=RASTER_BUF_BYTES;
+  rasterBackHeader=old; rasterBackValid=keep;
+  rasterVice=nullptr; rasterViceValid=false; vicePatchData=nullptr; vicePatchCount=0;
+  rasBW=next.blocksWide; rasX0=next.x0; rasY0=next.y0; rasW=next.width; rasH=next.height;
+  rasMpp=next.mm/1000.0f; rasterFrame=next.frame; rasHasPal=next.palette;
+  if (next.palette) for (int i=0;i<16;i++) rasPal[i]=rasterU16(p+16+2*i);
+  rasterValid=true; rasterAt=millis();
+  rasterCarriesBuildings=next.buildings;
+}
 // 普通地图先在备用缓冲解码，成功后交换；上一块保留，用来补齐新块的覆盖边缘。
 bool parseRaster(const uint8_t *p, uint32_t len) {
   RasterHeader next;
@@ -207,22 +254,38 @@ bool parseRaster(const uint8_t *p, uint32_t len) {
   }
   if (!rasterBackBuf) rasterBackBuf=(uint8_t *)ps_malloc(RASTER_BUF_BYTES);
   if (!rasterBackBuf) return false;
+  RasterHeader old=currentRasterHeader();
+  const bool keep=canKeepRaster(old,next);
+  rasterBackValid=false;
   rasterDecode(p,next,rasterBackBuf);
-  RasterHeader old = {};
-  old.frame=rasterFrame; old.x0=rasX0; old.y0=rasY0; old.width=rasW; old.height=rasH;
-  old.mm=(uint16_t)lroundf(rasMpp*1000); old.blocksWide=rasBW;
-  bool keep=rasterValid && !rasterViceValid && !rasHasPal && !next.palette &&
-      rasterFrame==next.frame && old.mm==next.mm && rasterAllocatedBytes==RASTER_BUF_BYTES;
-  uint8_t *oldPixels=rasterBuf;
-  rasterBuf=rasterBackBuf;
-  rasterBackBuf=oldPixels;
-  if (rasterAllocatedBytes!=RASTER_BUF_BYTES) { free(rasterBackBuf); rasterBackBuf=nullptr; keep=false; }
-  rasterAllocatedBytes=RASTER_BUF_BYTES;
-  rasterBackHeader=old; rasterBackValid=keep;
-  rasterVice=nullptr; rasterViceValid=false; vicePatchData=nullptr; vicePatchCount=0;
-  rasBW=next.blocksWide; rasX0=next.x0; rasY0=next.y0; rasW=next.width; rasH=next.height;
-  rasMpp=next.mm/1000.0f; rasterFrame=next.frame; rasHasPal=next.palette;
-  if (next.palette) for (int i=0;i<16;i++) rasPal[i]=rasterU16(p+16+2*i);
-  rasterValid=true; rasterAt=millis();
+  if(keep && rasterBuildingCarryOn && (themeIdx>=1 && themeIdx<=3)) rasterCarryRoofs(rasterBuf,old,rasterBackBuf,next);
+#if MOTONAV_RASTER_SMOOTHING
+  bool tilesReady=false;
+  if(!next.palette && themeIdx>=1 && themeIdx<=3) {
+    prepareRasterTiles();
+    if(rasterBackTiles){size_t scan=0;while(!rasterTileScan(rasterBackBuf,next,rasterBackTiles,scan)){}tilesReady=true;}
+  }
+  installDecodedRaster(p,next,old,keep,tilesReady);
+#else
+  installDecodedRaster(p,next,old,keep);
+#endif
   return true;
+}
+
+void setRasterBuildingCarry(bool on) {
+  if(on!=rasterBuildingCarryOn)cancelPendingRaster();
+  rasterBuildingCarryEpoch=mediaConnectionEpoch;
+  rasterBuildingCarryOn=on;
+  if(on) return;
+  if(rasterValid && !rasHasPal && !rasterViceValid) {
+    RasterHeader h={};h.bytes=(size_t)rasBW*((rasH+15)/16)*128;
+    if(h.bytes<=RASTER_BUF_BYTES) rasterClearRoofs(rasterBuf,h);
+    rasterCarriesBuildings=false;
+  }
+  if(rasterBackValid) rasterClearRoofs(rasterBackBuf,rasterBackHeader);
+#if MOTONAV_RASTER_SMOOTHING
+  // Clearing roofs changes material purity; nearest remains safe until the next map.
+  rasterTilesValid=false;
+#endif
+  navDirty=true;
 }
